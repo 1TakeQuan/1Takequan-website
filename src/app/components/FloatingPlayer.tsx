@@ -1,16 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
 import { usePlayer } from "@/contexts/PlayerContext";
-import PlayerChrome from "./PlayerChrome";
+import { useState, useEffect, useRef } from "react";
+import Image from "next/image";
 
 export default function FloatingPlayer() {
-  const { currentTrack, isPlaying, togglePlay, next, previous } = usePlayer();
+  const { currentTrack, isPlaying, togglePlay, next, previous, shuffle, toggleShuffle } = usePlayer();
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
-  const [isShuffle, setIsShuffle] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number } | null>(null);
   const playerRef = useRef<HTMLDivElement>(null);
@@ -18,9 +17,12 @@ export default function FloatingPlayer() {
   // Set default position to bottom right on mount
   useEffect(() => {
     const updatePosition = () => {
+      if (typeof window === "undefined") return;
+      const width = isMinimized ? 200 : 400;
+      const height = isMinimized ? 80 : 300;
       setPosition({
-        x: window.innerWidth - 420,
-        y: window.innerHeight - (isMinimized ? 120 : 220),
+        x: window.innerWidth - width - 20,
+        y: window.innerHeight - height - 20,
       });
     };
 
@@ -32,12 +34,11 @@ export default function FloatingPlayer() {
   useEffect(() => {
     if (isDragging) {
       const handleMouseMove = (e: MouseEvent) => {
-        if (dragRef.current) {
-          setPosition({
-            x: e.clientX - dragRef.current.startX,
-            y: e.clientY - dragRef.current.startY,
-          });
-        }
+        if (!dragRef.current) return;
+        setPosition({
+          x: e.clientX - dragRef.current.startX,
+          y: e.clientY - dragRef.current.startY,
+        });
       };
 
       const handleMouseUp = () => {
@@ -59,214 +60,153 @@ export default function FloatingPlayer() {
   if (!currentTrack) return null;
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Only drag from header area
     if ((e.target as HTMLElement).closest(".drag-handle")) {
       setIsDragging(true);
-      dragRef.current = {
-        startX: e.clientX - position.x,
-        startY: e.clientY - position.y,
-      };
+      const rect = playerRef.current?.getBoundingClientRect();
+      if (rect) {
+        dragRef.current = {
+          startX: e.clientX - rect.left,
+          startY: e.clientY - rect.top,
+        };
+      }
     }
   };
 
   const toggleFavorite = () => {
     setIsFavorite(!isFavorite);
-    // TODO: Save to localStorage or API
     console.log("Toggle favorite:", currentTrack.id, !isFavorite);
   };
 
   return (
     <div
       ref={playerRef}
+      className={`fixed z-50 bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl transition-all ${
+        isDragging ? "cursor-grabbing" : ""
+      }`}
       style={{
-        position: "fixed",
         left: `${position.x}px`,
         top: `${position.y}px`,
-        zIndex: 9999,
-        width: isMinimized ? "350px" : "380px",
-        transition: isDragging ? "none" : "width 0.3s ease, height 0.3s ease",
+        width: isMinimized ? "200px" : "400px",
       }}
-      className="bg-zinc-900 border-2 border-zinc-800 rounded-lg shadow-2xl overflow-hidden"
       onMouseDown={handleMouseDown}
     >
-      {/* Draggable Header */}
-      <div className="drag-handle bg-zinc-800 px-4 py-2 flex items-center justify-between cursor-move select-none">
+      {/* Header */}
+      <div className="drag-handle flex items-center justify-between p-4 cursor-grab active:cursor-grabbing border-b border-zinc-800">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">🎵 Now Playing</span>
+          <svg className="w-5 h-5 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
+          </svg>
+          <span className="text-sm font-semibold text-white">Now Playing</span>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsMinimized(!isMinimized);
-            }}
-            className="text-gray-400 hover:text-white text-sm px-2 py-1 hover:bg-zinc-700 rounded"
-            title={isMinimized ? "Expand" : "Minimize"}
+            onClick={() => setIsMinimized(!isMinimized)}
+            className="text-gray-400 hover:text-white transition"
           >
-            {isMinimized ? "□" : "_"}
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isMinimized ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+            </svg>
           </button>
         </div>
       </div>
 
-      {/* PlayerChrome - ALWAYS RENDERED, just hidden when minimized */}
-      <div style={{ display: isMinimized ? "none" : "block" }} className="p-4">
-        <PlayerChrome track={currentTrack} />
-      </div>
-
-      {/* Minimized View with Controls */}
-      {isMinimized && (
-        <div className="px-4 py-3">
-          {/* Track Info */}
-          <div className="mb-3">
-            <p className="truncate text-sm font-medium text-white">
-              {currentTrack.title}
-            </p>
-            <p className="text-xs text-gray-400">1TakeQuan</p>
+      {/* Player Content */}
+      {!isMinimized && (
+        <div className="p-4 space-y-4">
+          {/* Album Art */}
+          <div className="relative aspect-square rounded-lg overflow-hidden bg-zinc-800">
+            {currentTrack.cover ? (
+              <Image src={currentTrack.cover} alt={currentTrack.title} fill className="object-cover" />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <svg className="w-16 h-16 text-zinc-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
+                </svg>
+              </div>
+            )}
           </div>
 
-          {/* Mini Controls */}
-          <div className="flex items-center justify-between gap-2">
-            {/* Left Controls */}
-            <div className="flex items-center gap-1">
-              {/* Shuffle */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsShuffle(!isShuffle);
-                }}
-                className={`p-1.5 rounded transition ${
-                  isShuffle
-                    ? "text-red-500 bg-red-500/10"
-                    : "text-gray-400 hover:text-white hover:bg-zinc-800"
-                }`}
-                title="Shuffle"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
-                </svg>
-              </button>
+          {/* Track Info */}
+          <div className="text-center">
+            <h3 className="font-bold text-white truncate">{currentTrack.title}</h3>
+            <p className="text-sm text-gray-400 truncate">
+              {currentTrack.artists?.join(", ") || "1TakeQuan"}
+            </p>
+          </div>
 
-              {/* Repeat */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsRepeat(!isRepeat);
-                }}
-                className={`p-1.5 rounded transition ${
-                  isRepeat
-                    ? "text-red-500 bg-red-500/10"
-                    : "text-gray-400 hover:text-white hover:bg-zinc-800"
-                }`}
-                title="Repeat"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" />
-                </svg>
-              </button>
-            </div>
+          {/* Controls */}
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={toggleShuffle}
+              className={`${shuffle ? "text-orange-500" : "text-gray-400"} hover:text-white transition`}
+              title="Shuffle"
+            >
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M3 5h8.5a2.5 2.5 0 015 0H19v2h-2.5a2.5 2.5 0 00-5 0H3V5zm0 8h8.5a2.5 2.5 0 015 0H19v2h-2.5a2.5 2.5 0 01-5 0H3v-2z" />
+              </svg>
+            </button>
 
-            {/* Center Playback Controls */}
-            <div className="flex items-center gap-1">
-              {/* Skip Backward */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  previous();
-                }}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-zinc-800 rounded transition"
-                title="Previous"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-                </svg>
-              </button>
+            <button onClick={previous} className="text-gray-400 hover:text-white transition">
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M8.445 14.832A1 1 0 0010 14v-2.798l5.445 3.63A1 1 0 0017 14V6a1 1 0 00-1.555-.832L10 8.798V6a1 1 0 00-1.555-.832l-6 4a1 1 0 000 1.664l6 4z" />
+              </svg>
+            </button>
 
-              {/* Play/Pause */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  togglePlay();
-                }}
-                className="p-2 bg-red-600 hover:bg-red-700 text-white rounded-full transition"
-                title={isPlaying ? "Pause" : "Play"}
-              >
-                {isPlaying ? (
-                  <svg
-                    className="w-4 h-4"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-                  </svg>
-                ) : (
-                  <svg
-                    className="w-4 h-4"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                )}
-              </button>
-
-              {/* Skip Forward */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  next();
-                }}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-zinc-800 rounded transition"
-                title="Next"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+            <button
+              onClick={togglePlay}
+              className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center hover:scale-110 transition shadow-lg"
+            >
+              {isPlaying ? (
+                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" />
                 </svg>
-              </button>
-            </div>
-
-            {/* Right Controls */}
-            <div className="flex items-center gap-1">
-              {/* Favorite */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleFavorite();
-                }}
-                className={`p-1.5 rounded transition ${
-                  isFavorite
-                    ? "text-red-500"
-                    : "text-gray-400 hover:text-white hover:bg-zinc-800"
-                }`}
-                title={
-                  isFavorite ? "Remove from favorites" : "Add to favorites"
-                }
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill={isFavorite ? "currentColor" : "none"}
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+              ) : (
+                <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
                 </svg>
-              </button>
+              )}
+            </button>
+
+            <button onClick={next} className="text-gray-400 hover:text-white transition">
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M4.555 5.168A1 1 0 003 6v8a1 1 0 001.555.832L10 11.202V14a1 1 0 001.555.832l6-4a1 1 0 000-1.664l-6-4A1 1 0 0010 6v2.798l-5.445-3.63z" />
+              </svg>
+            </button>
+
+            <button
+              onClick={toggleFavorite}
+              className={`${isFavorite ? "text-red-500" : "text-gray-400"} hover:text-red-400 transition`}
+              title="Favorite"
+            >
+              <svg className="w-5 h-5" fill={isFavorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Minimized View */}
+      {isMinimized && (
+        <div className="p-3 flex items-center gap-3">
+          <button
+            onClick={togglePlay}
+            className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center hover:scale-110 transition flex-shrink-0"
+          >
+            {isPlaying ? (
+              <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+              </svg>
+            )}
+          </button>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-white truncate">{currentTrack.title}</div>
+            <div className="text-xs text-gray-400 truncate">
+              {currentTrack.artists?.join(", ") || "1TakeQuan"}
             </div>
           </div>
         </div>

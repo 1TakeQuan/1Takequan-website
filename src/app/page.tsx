@@ -3,16 +3,24 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import type { Track } from "@/lib/types";
 import SignupBar from "./components/SignupBar";
 
+type YouTubeTrack = {
+  id: string;
+  url: string;
+  embed: string;
+  thumb: string;
+  title?: string;
+};
+
 export default function HomePage() {
-  const [latestTracks, setLatestTracks] = useState<Track[]>([]);
-  const [coverCache, setCoverCache] = useState<Record<string, string>>({});
+  const [latestTracks, setLatestTracks] = useState<YouTubeTrack[]>([]);
+  const [meta, setMeta] = useState<Record<string, string>>({});
   const [galleryPhotos, setGalleryPhotos] = useState<Array<{ src: string; alt: string }>>([]);
   const [totalTracks, setTotalTracks] = useState(0);
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
-  // Load gallery photos - test which ones work
+  // Load gallery photos
   useEffect(() => {
     const photoNumbers = [52, 51, 50, 40, 39, 32, 33, 34, 31, 28, 27, 26, 25, 24, 23, 22, 21, 37];
     
@@ -27,40 +35,54 @@ export default function HomePage() {
 
     Promise.all(testImages).then((results) => {
       const validPhotos = results.filter((p): p is { src: string; alt: string } => p !== null);
-      setGalleryPhotos(validPhotos.slice(0, 12)); // Show first 12 that work
+      setGalleryPhotos(validPhotos.slice(0, 12));
     });
   }, []);
 
-  // Fetch latest tracks from catalog
+  // Fetch total tracks count from catalog
   useEffect(() => {
     fetch("/api/catalog")
       .then((r) => r.json())
       .then((data) => {
-        const tracks: Track[] = data?.tracks ?? [];
-        setTotalTracks(tracks.length);          // ← set the real count
-        setLatestTracks(tracks.slice(0, 3));    // keep your latest list if needed
-
-        // Prefetch covers
-        tracks.slice(0, 3).forEach((track) => {
-          const sc = track.sources?.soundcloud as any;
-          const url = typeof sc === "string" ? sc : sc?.url;
-          if (!url) return;
-          fetch(`https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(url)}`)
-            .then((r) => r.json())
-            .then((o) => {
-              const art = o.thumbnail_url?.replace("-large", "-t500x500");
-              if (art) setCoverCache((p) => ({ ...p, [track.id]: art }));
-            })
-            .catch(() => {});
-        });
+        const tracks = data?.tracks ?? [];
+        setTotalTracks(tracks.length);
       })
       .catch(() => setTotalTracks(0));
   }, []);
 
-  const handlePlayTrack = (track: Track, playlist: Track[]) => {
-    // Your existing play logic here
-    console.log("Playing:", track.title);
-  };
+  // Load latest 3 YouTube Music tracks
+  useEffect(() => {
+    const youtubeLinks = [
+      "https://music.youtube.com/watch?v=i_a2LhIVhJk&si=b-OhpkriOruRV7u1",
+      "https://music.youtube.com/watch?v=Pmwz7F8a8qk&si=FyVWJcr_TmTbZM0q",
+      "https://music.youtube.com/watch?v=IFqMzjHBVRs&si=OHI8DyBgiSCL7E35",
+    ];
+
+    const tracks: YouTubeTrack[] = youtubeLinks.map((url) => {
+      const videoId = new URL(url).searchParams.get("v") || "";
+      return {
+        id: videoId,
+        url: url,
+        embed: `https://www.youtube-nocookie.com/embed/${videoId}`,
+        thumb: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+      };
+    });
+
+    setLatestTracks(tracks);
+
+    // Fetch titles from YouTube
+    tracks.forEach(async (track) => {
+      try {
+        const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${track.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setMeta((prev) => ({ ...prev, [track.id]: data.title || "1TakeQuan" }));
+        }
+      } catch (error) {
+        console.error("Failed to fetch title:", error);
+      }
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -144,7 +166,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Latest Releases - 3 Tracks */}
+      {/* Latest Releases - 3 YouTube Music Tracks */}
       <section className="py-20 bg-zinc-900">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex items-center justify-between mb-12">
@@ -163,34 +185,54 @@ export default function HomePage() {
             {latestTracks.map((track) => (
               <div
                 key={track.id}
-                className="group bg-black rounded-2xl overflow-hidden border border-zinc-800 hover:border-orange-500 transition-all cursor-pointer hover:scale-105 hover:shadow-xl hover:shadow-orange-500/20"
-                onClick={() => handlePlayTrack(track, latestTracks)}
+                className="group bg-black rounded-2xl overflow-hidden border border-zinc-800 hover:border-orange-500 transition-all hover:scale-105 hover:shadow-xl hover:shadow-orange-500/20"
               >
-                <div className="relative aspect-square bg-gradient-to-br from-orange-900/20 to-zinc-900">
-                  {coverCache[track.id] ? (
-                    <Image
-                      src={coverCache[track.id]}
-                      alt={track.title}
-                      fill
-                      className="object-cover group-hover:scale-110 transition duration-500"
-                      unoptimized
+                <div className="relative aspect-video bg-black">
+                  {playingId === track.id ? (
+                    <iframe
+                      src={`${track.embed}?autoplay=1&rel=0`}
+                      title={meta[track.id] || "Track"}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="w-full h-full"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-4xl text-orange-500/40">🎵</div>
+                    <>
+                      <Image
+                        src={track.thumb}
+                        alt={meta[track.id] || "Track"}
+                        fill
+                        className="object-cover group-hover:scale-110 transition duration-500"
+                        unoptimized
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-300 flex items-center justify-center">
+                        <button
+                          onClick={() => setPlayingId(track.id)}
+                          className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100 transition-all duration-300 shadow-2xl"
+                        >
+                          <svg className="w-10 h-10 ml-1" fill="white" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </>
                   )}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-300 flex items-center justify-center">
-                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100 transition-all duration-300 shadow-2xl">
-                      <svg className="w-10 h-10 ml-1" fill="white" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
-                  </div>
                 </div>
                 <div className="p-5">
                   <h3 className="font-bold text-lg mb-1 truncate group-hover:text-orange-500 transition">
-                    {track.title}
+                    {meta[track.id] || "Loading..."}
                   </h3>
-                  <p className="text-gray-400 text-sm">{track.artists?.join(", ") || "1TakeQuan"}</p>
+                  <a
+                    href={track.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-orange-400 hover:text-orange-300 inline-flex items-center gap-1"
+                  >
+                    Listen on YouTube Music
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
                 </div>
               </div>
             ))}
@@ -282,8 +324,6 @@ export default function HomePage() {
 
       {/* Newsletter */}
       <SignupBar />
-      <p>It&apos;s Quan time.</p>
-      <p>Don&apos;t sleep — press play.</p>
     </div>
   );
 }

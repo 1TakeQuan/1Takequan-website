@@ -260,6 +260,12 @@ function buildItems(links: string[]): Item[] {
     } catch {
       continue;
     }
+    // Extract video ID and clean URL
+    const hostLower = u.hostname.toLowerCase();
+    if (hostLower.includes("youtube.com") || hostLower.includes("youtu.be")) {
+      // Normalize to music.youtube.com
+      u.hostname = "music.youtube.com";
+    }
 
     // accept youtube.com, youtu.be, music.youtube.com
     const hostOk =
@@ -283,7 +289,8 @@ function buildItems(links: string[]): Item[] {
       // normalize outbound URL to music.youtube.com
       const musicUrl = new URL("https://music.youtube.com/watch");
       musicUrl.searchParams.set("v", videoId);
-
+      const si = u.searchParams.get("si");
+      if (si) musicUrl.searchParams.set("si", si);
       items.push({
         key,
         kind: "all",

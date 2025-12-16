@@ -1,11 +1,31 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import EmailModal from "./Emailsignup";
 
 export default function SignupBar() {
+  const [hideBar, setHideBar] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isSubscribed = localStorage.getItem("subscribed") === "true";
+      if (isSubscribed) setHideBar(true);
+    }
+  }, []);
+
+  // This function should be called when the user successfully subscribes
+  const handleSubscribed = () => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("subscribed", "true");
+      setHideBar(true);
+    }
+  };
+
+  if (hideBar) return null;
+
   return (
     <>
-      <EmailModal />
+      <EmailModal onSubscribed={handleSubscribed} />
       
       <footer className="w-full bg-gradient-to-r from-zinc-900 via-black to-zinc-900 border-t border-zinc-800 py-8">
         <div className="max-w-6xl mx-auto px-4">

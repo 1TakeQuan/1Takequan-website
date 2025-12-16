@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from "react";
 
-export default function EmailModal() {
+interface EmailsignupProps {
+  onSubscribed?: () => void;
+}
+
+export default function EmailModal({ onSubscribed }: EmailsignupProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [zipcode, setZipcode] = useState("");
@@ -54,6 +58,9 @@ export default function EmailModal() {
         setEmail("");
         setZipcode("");
         
+        // Notify parent component
+        if (onSubscribed) onSubscribed();
+
         // Auto-close after 3 seconds
         setTimeout(() => {
           setIsOpen(false);

@@ -1,7 +1,9 @@
 "use client";
 
+
 import Image from "next/image";
 import { useMemo, useState } from "react";
+import VideoUploader from "@/app/components/VideoUploader";
 
 const youtubeLinks = [
   "https://youtu.be/5wQHLGZhcLo?si=_gNnFO0x0db52wWa",
@@ -162,6 +164,10 @@ export default function VideosPage() {
               </div>
             );
           })}
+        </div>
+        <div className="container mx-auto px-4 py-8">
+          <h1 className="text-3xl font-bold mb-6">Music Videos</h1>
+          <p className="text-gray-400">Video content coming soon...</p>
         </div>
       </div>
     </main>

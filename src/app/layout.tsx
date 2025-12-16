@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import ClientShell from "./components/ClientShell";
+import { PlayerProvider } from "@/contexts/PlayerContext";
+import LayoutContent from "@/components/LayoutContent";
 
 export const metadata: Metadata = {
   title: "1TakeQuan - Official Website",
@@ -11,7 +12,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="bg-black text-white">
-        <ClientShell>{children}</ClientShell>
+        <PlayerProvider>
+          <LayoutContent>{children}</LayoutContent>
+        </PlayerProvider>
       </body>
     </html>
   );
