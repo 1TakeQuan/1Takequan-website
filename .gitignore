@@ -4,7 +4,6 @@
 /node_modules
 /.pnp
 
-public/gallery/
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -12,8 +11,23 @@ public/gallery/
 !.yarn/releases
 !.yarn/versions
 
+# Troubleshooting files
+all-objects.txt
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
 # testing
 /coverage
+
+# Never commit videos
+public/gallery/*.mov
+public/gallery/*.MOV
+public/gallery/*.mp4
+public/gallery/*.MP4
+public/gallery/*.m4v
+public/gallery/*.M4V
 
 # next.js
 /.next/
@@ -41,5 +55,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-public/gallery/
-.vercel

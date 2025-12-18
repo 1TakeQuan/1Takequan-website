@@ -1,36 +1,19 @@
+
 import { NextResponse } from "next/server";
+import { promises as fs } from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
 
-const images = [
-  // Add all your actual image filenames from /public/gallery (case-sensitive!)
-  "99.MOV",
-  "100.mov",
-  "101.mov",
-  "102.mov",
-  "103.mov",
-  "105.jpg",
-  "106.jpg",
-  "108.mp4",
-  "109.mp4",
-  "110.mp4",
-  "111.mov",
-  "112.mov",
-  "113.M4V",
-  "114.mp4",
-  "115.M4V",
-  "116.MOV",
-  "117.mov",
-  "118.mov",
-  "119.mov",
-  "120.jpeg",
-  "121.jpeg",
-  "124.jpg",
-  "125.jpg",
-  "126.mov",
-  "28.JPG"
-  // ...add all other image/video filenames you want to serve from /public/gallery
-];
+
+// Helper to get only image files from public/gallery
+async function getGalleryImages() {
+  const galleryDir = path.join(process.cwd(), "public", "gallery");
+  const files = await fs.readdir(galleryDir);
+  // Only allow image extensions (add more if needed)
+  const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".JPG"];
+  return files.filter(f => imageExts.includes(path.extname(f)));
+}
 
 const youtube = [
   "https://youtu.be/1Zt8_6730zA",
@@ -96,5 +79,6 @@ const youtube = [
 ];
 
 export async function GET() {
+  const images = await getGalleryImages();
   return NextResponse.json({ images, youtube });
 }
