@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import SignupBar from "./components/SignupBar";
+import Gallery from "@/app/components/Gallery";
 
 type YouTubeTrack = {
   id: string;
@@ -12,6 +13,7 @@ type YouTubeTrack = {
   thumb: string;
   title?: string;
 };
+
 
 export default function HomePage() {
   const [latestTracks, setLatestTracks] = useState<YouTubeTrack[]>([]);
