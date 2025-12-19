@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 
 interface ContentItem {
-  type: "photo" | "video" | "youtube";
+  type: "photo" | "video";
   src: string;
   alt: string;
   id?: string;
@@ -52,9 +52,9 @@ export default function ContentPage() {
           id: filename,
         }));
 
-        // YouTube
+        // YouTube as videos
         const youtube: ContentItem[] = (data.youtube || []).map((url: string) => ({
-          type: "youtube",
+          type: "video",
           src: url,
           alt: "YouTube Video",
           id: url,
@@ -161,8 +161,6 @@ export default function ContentPage() {
             <div className="relative flex-1 bg-black rounded-lg overflow-hidden">
               {selectedItem.type === "photo" ? (
                 <Image src={selectedItem.src} alt={selectedItem.alt} fill className="object-contain" unoptimized />
-              ) : selectedItem.type === "video" ? (
-                <video src={selectedItem.src} controls autoPlay className="w-full h-full object-contain" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <iframe
@@ -304,7 +302,7 @@ export default function ContentPage() {
                     sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
                     unoptimized
                   />
-                ) : item.type === "youtube" ? (
+                ) : (
                   <iframe
                     src={toEmbedUrl(item.src)}
                     title="YouTube video"
@@ -312,8 +310,6 @@ export default function ContentPage() {
                     allowFullScreen
                     className="w-full h-full rounded shadow"
                   />
-                ) : (
-                  <video src={item.src} className="w-full h-full object-cover group-hover:scale-110 transition duration-500" />
                 )}
                 {/* Video Play Icon */}
                 {item.type === "video" && (
