@@ -296,7 +296,7 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto px-6">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div className="relative aspect-square rounded-2xl overflow-hidden bg-gradient-to-br from-orange-500/10 to-red-600/10 p-8 border-2 border-zinc-800">
-              <Image src="/logo.png" alt="1TakeQuan Logo" fill className="object-contain p-8" />
+              <Image src="/logo.PNG" alt="1TakeQuan Logo" fill className="object-contain p-8" />
             </div>
             <div>
               <h2 className="text-4xl md:text-5xl font-bold mb-6 bg-gradient-to-r from-orange-500 to-red-600 bg-clip-text text-transparent">
