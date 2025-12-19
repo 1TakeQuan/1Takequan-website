@@ -93,7 +93,7 @@ export default function HomePage() {
         <div className="absolute inset-0">
           <Image
             key={0}
-            src="/gallery/28.jpg"
+            src="/gallery/28.JPG"
             alt="1TakeQuan"
             fill
             className="object-cover opacity-60 transition-opacity duration-1000"
