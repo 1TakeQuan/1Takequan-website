@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 
 interface ContentItem {
-  type: "photo" | "video";
+  type: "photo" | "video" | "youtube";
   src: string;
   alt: string;
   id?: string;
@@ -18,6 +18,20 @@ interface ContentStats {
   userFavorited: boolean;
 }
 
+// Converts YouTube/Shorts URLs to embed URLs
+function toEmbedUrl(url: string) {
+  const short = url.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/);
+  if (short?.[1]) return `https://www.youtube.com/embed/${short[1]}`;
+
+  const shorts = url.match(/youtube\.com\/shorts\/([A-Za-z0-9_-]{6,})/);
+  if (shorts?.[1]) return `https://www.youtube.com/embed/${shorts[1]}`;
+
+  const watch = url.match(/[?&]v=([A-Za-z0-9_-]{6,})/);
+  if (watch?.[1]) return `https://www.youtube.com/embed/${watch[1]}`;
+
+  return url;
+}
+
 export default function ContentPage() {
   const [selectedItem, setSelectedItem] = useState<ContentItem | null>(null);
   const [shuffledContent, setShuffledContent] = useState<ContentItem[]>([]);
@@ -27,74 +41,46 @@ export default function ContentPage() {
   const [newComment, setNewComment] = useState("");
 
   useEffect(() => {
-    const photoFilenames = [
-      "124.jpeg", "123.jpeg", "122.jpeg", "121.jpeg", "120.jpeg",
-      "107.jpg", "106.jpg", "105.jpeg", "104.jpg", "78.jpg", "76.jpg",
-      "54.jpg", "53.jpg", "52.jpg", "51.jpg", "50.jpg", "49.jpeg", "48.jpg",
-      "47.jpg", "46.jpg", "45.jpg", "44.jpg", "43.jpg", "42.jpg", "41.jpg",
-      "40.jpg", "39.jpg", "38.jpeg", "37.jpeg", "36.jpeg", "35.jpg", "34.jpg",
-      "33.jpg", "32.jpg", "31.jpg", "30.jpg", "29.jpg", "28.jpg", "27.jpg",
-      "26.jpeg", "25.jpg", "24.jpg", "23.jpg", "21.jpeg", "20.jpeg", "19.jpg",
-      "18.jpeg", "17.jpg", "16.jpeg", "15.jpeg", "14.jpeg", "13.jpeg", "12.jpg",
-      "11.jpg", "10.jpg", "9.jpeg", "8.jpg", "7.jpeg", "6.jpg", "5.jpg", "4.jpeg",
-      "3.jpg", "2.jpg", "1.jpeg",
-    ];
-
-    const videoFilenames = [
-      "1TakeQuan - Stop Drop Rock Rock.mp4",
-      "1TakeQuan - Runaway.mp4",
-      "1TakeQuan - No Cap.mp4",
-      "59.mp4", "61.mp4", "63.mp4", "65.mp4", "66.mp4", "67.mp4", "68.mp4", "79.mp4", "108.mp4",
-      "126.mov", "127.mov", "119.mov", "118.mov", "117.mov", "116.mov", "112.mov", "111.mov",
-      "110.mov", "109.mov", "103.mov", "102.mov", "101.mov", "108.mov", "100.mov", "99.mov",
-      "96.mov", "95.mov", "94.mov", "93.mov", "92.mov", "91.mov", "90.mov", "89.mov",
-      "88.mov", "87.mov", "86.mov", "85.mov", "84.mov", "83.mov", "82.mov", "81.mov",
-      "80.mov", "77.mov", "75.mov", "74.mov", "73.mov", "72.mov", "71.mov", "70.mov",
-      "69.mov", "65.mov", "64.mov", "62.mov", "60.mov", "58.mov", "57.mov", "56.mov",
-    ];
-
-    const testPhotos = photoFilenames.map((filename) => {
-      return new Promise<ContentItem | null>((resolve) => {
-        const img = new window.Image();
-        img.onload = () => resolve({
-          type: "photo" as const,
+    fetch("/api/media", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        // Images
+        const photos: ContentItem[] = (data.images || []).map((filename: string) => ({
+          type: "photo",
           src: `/gallery/${filename}`,
           alt: `Photo ${filename}`,
           id: filename,
+        }));
+
+        // YouTube
+        const youtube: ContentItem[] = (data.youtube || []).map((url: string) => ({
+          type: "youtube",
+          src: url,
+          alt: "YouTube Video",
+          id: url,
+        }));
+
+        // Combine and shuffle
+        const allContent = [...photos, ...youtube];
+        const shuffled = allContent.sort(() => Math.random() - 0.5);
+        setShuffledContent(shuffled);
+
+        // Stats/comments
+        const initialStats: Record<string, ContentStats> = {};
+        const initialComments: Record<string, string[]> = {};
+        shuffled.forEach((item) => {
+          initialStats[item.id!] = {
+            likes: 0,
+            comments: 0,
+            favorites: 0,
+            userLiked: false,
+            userFavorited: false,
+          };
+          initialComments[item.id!] = [];
         });
-        img.onerror = () => resolve(null);
-        img.src = `/gallery/${filename}`;
+        setStats(initialStats);
+        setComments(initialComments);
       });
-    });
-
-    const videos: ContentItem[] = videoFilenames.map((filename) => ({
-      type: "video" as const,
-      src: `/gallery/${filename}`,
-      alt: filename.replace(/\.(mp4|mov)$/, ""),
-      id: filename,
-    }));
-
-    Promise.all(testPhotos).then((results) => {
-      const validPhotos = results.filter((p): p is ContentItem => p !== null);
-      const allContent = [...validPhotos, ...videos];
-      const shuffled = allContent.sort(() => Math.random() - 0.5);
-      setShuffledContent(shuffled);
-
-      const initialStats: Record<string, ContentStats> = {};
-      const initialComments: Record<string, string[]> = {};
-      shuffled.forEach((item) => {
-        initialStats[item.id!] = {
-          likes: 0,
-          comments: 0,
-          favorites: 0,
-          userLiked: false,
-          userFavorited: false,
-        };
-        initialComments[item.id!] = [];
-      });
-      setStats(initialStats);
-      setComments(initialComments);
-    });
   }, []);
 
   const toggleLike = (itemId: string) => {
@@ -138,7 +124,6 @@ export default function ContentPage() {
   const shareContent = (item: ContentItem) => {
     const url = `${window.location.origin}/content`;
     const text = `Check out this content from 1TakeQuan: ${item.alt}`;
-    
     if (navigator.share) {
       navigator.share({ title: "1TakeQuan Content", text, url });
     } else {
@@ -167,7 +152,6 @@ export default function ContentPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          
           {/* prevent inner clicks from closing modal */}
           <div
             className="flex flex-col lg:flex-row max-w-6xl w-full max-h-[90vh] gap-4"
@@ -177,11 +161,22 @@ export default function ContentPage() {
             <div className="relative flex-1 bg-black rounded-lg overflow-hidden">
               {selectedItem.type === "photo" ? (
                 <Image src={selectedItem.src} alt={selectedItem.alt} fill className="object-contain" unoptimized />
-              ) : (
+              ) : selectedItem.type === "video" ? (
                 <video src={selectedItem.src} controls autoPlay className="w-full h-full object-contain" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <iframe
+                    width="100%"
+                    height="100%"
+                    src={toEmbedUrl(selectedItem.src)}
+                    title={selectedItem.alt}
+                    frameBorder="0"
+                    allowFullScreen
+                    className="rounded-lg"
+                  />
+                </div>
               )}
             </div>
-
             {/* Interactions Sidebar */}
             <div className="w-full lg:w-80 flex flex-col gap-4">
               {/* Action Buttons */}
@@ -199,7 +194,6 @@ export default function ContentPage() {
                   </svg>
                   Like ({stats[selectedItem.id!]?.likes || 0})
                 </button>
-
                 <button
                   onClick={() => setShowComments(!showComments)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-zinc-800 text-gray-300 hover:bg-zinc-700 transition font-semibold"
@@ -209,7 +203,6 @@ export default function ContentPage() {
                   </svg>
                   Comments ({stats[selectedItem.id!]?.comments || 0})
                 </button>
-
                 <button
                   onClick={() => toggleFavorite(selectedItem.id!)}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition font-semibold ${
@@ -223,7 +216,6 @@ export default function ContentPage() {
                   </svg>
                   Favorite ({stats[selectedItem.id!]?.favorites || 0})
                 </button>
-
                 <button
                   onClick={() => shareContent(selectedItem)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-zinc-800 text-gray-300 hover:bg-zinc-700 transition font-semibold"
@@ -234,12 +226,10 @@ export default function ContentPage() {
                   Share
                 </button>
               </div>
-
               {/* Comments Section */}
               {showComments && (
                 <div className="bg-zinc-900 rounded-lg p-4 flex flex-col flex-1 max-h-96">
                   <h3 className="font-bold text-lg mb-3">Comments</h3>
-                  
                   <div className="flex-1 overflow-y-auto mb-4 space-y-2 pr-2">
                     {comments[selectedItem.id!] && comments[selectedItem.id!].length > 0 ? (
                       comments[selectedItem.id!].map((comment, idx) => (
@@ -252,7 +242,6 @@ export default function ContentPage() {
                       <p className="text-gray-500 text-sm">No comments yet. Be the first!</p>
                     )}
                   </div>
-
                   <div className="flex gap-2 pt-3 border-t border-zinc-700">
                     <input
                       type="text"
@@ -285,7 +274,8 @@ export default function ContentPage() {
           </h1>
           {shuffledContent.length > 0 && (
             <p className="text-xl text-gray-400">
-              {shuffledContent.filter(i => i.type === "photo").length} photos • {shuffledContent.filter(i => i.type === "video").length} videos
+              {shuffledContent.filter((i) => i.type === "photo").length} photos •{" "}
+              {shuffledContent.filter((i) => i.type === "video").length} videos
             </p>
           )}
         </header>
@@ -314,10 +304,17 @@ export default function ContentPage() {
                     sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
                     unoptimized
                   />
+                ) : item.type === "youtube" ? (
+                  <iframe
+                    src={toEmbedUrl(item.src)}
+                    title="YouTube video"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="w-full h-full rounded shadow"
+                  />
                 ) : (
                   <video src={item.src} className="w-full h-full object-cover group-hover:scale-110 transition duration-500" />
                 )}
-                
                 {/* Video Play Icon */}
                 {item.type === "video" && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30">
@@ -328,7 +325,6 @@ export default function ContentPage() {
                     </div>
                   </div>
                 )}
-
                 {/* Hover Overlay */}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center">
                   <svg className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
