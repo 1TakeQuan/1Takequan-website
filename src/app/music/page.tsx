@@ -220,7 +220,6 @@ const rawLinks: string[] = [
   "https://music.youtube.com/watch?v=fbp-aKndpoc&si=qysRUCch5YrZcwrP",
   "https://music.youtube.com/watch?v=-5zEyXS08pk&si=jgdnYHEDzasOpnTa",
   "https://music.youtube.com/watch?v=_Do3duXxxbs&si=NQBdC_Fd9d9EFT67",
-  "https://music.youtube.com/watch?v=_Do3duXxxbs&si=NQBdC_Fd9d9EFT67",
   "https://music.youtube.com/watch?v=r00GxyY79S4&si=v8SAzf7GVzuTD4W7",
   "https://music.youtube.com/watch?v=iMCqBagOOOs&si=fG2xU0CYzbZmdZuq",
   "https://music.youtube.com/watch?v=ujGTENMJfLw&si=eoUQb1oIpQoe1O0W",
@@ -343,11 +342,9 @@ const FEATURED_ID = ""; // set a key from your catalog (e.g., "video:XXXXX")
 export default function MusicPage() {
   const items = useMemo(() => buildItems(rawLinks), []);
   const [meta, setMeta] = useState<Record<string, string>>({});
-  const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [modalItem, setModalItem] = useState<Item | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Kind>("all");
-
-  // NEW: layout toggle
   const [layout, setLayout] = useState<"rows" | "rail">("rail");
 
   useEffect(() => {
@@ -381,7 +378,6 @@ export default function MusicPage() {
     });
   }, [items, meta, query, tab]);
 
-  // helper to chunk into rows of 10
   const rows = useMemo(() => {
     const out: typeof filtered[] = [];
     for (let i = 0; i < filtered.length; i += 10) out.push(filtered.slice(i, i + 10));
@@ -389,41 +385,30 @@ export default function MusicPage() {
   }, [filtered]);
 
   const Card = ({ it }: { it: Item }) => {
-    const isPlaying = playingKey === it.key;
     const title = meta[it.key] ?? (it.kind === "project" ? `Project • ${it.id}` : `Video • ${it.id}`);
     return (
-      <div className="snap-start rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 hover:border-red-500/60 transition group">
+      <div
+        className="snap-start rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 hover:border-red-500/60 transition group cursor-pointer"
+        onClick={() => setModalItem(it)}
+      >
         <div className="relative aspect-[5/3] bg-black">
-          {isPlaying ? (
-            <iframe
-              src={`${it.embed}?autoplay=1&rel=0`}
-              title={title}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              className="w-full h-full"
-            />
-          ) : (
-            <Image src={it.thumb} alt={title} fill className="object-cover" unoptimized sizes="240px" />
-          )}
-          {!isPlaying && (
-            <button
-              onClick={() => setPlayingKey(it.key)}
-              className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-              aria-label="Play"
-            >
-              <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center shadow">
-                <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </div>
-            </button>
-          )}
+          <Image src={it.thumb} alt={title} fill className="object-cover" unoptimized sizes="240px" />
+          <button
+            className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+            aria-label="Play"
+          >
+            <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center shadow">
+              <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </button>
         </div>
         <div className="px-3 py-2">
           <div className="text-xs font-semibold text-white line-clamp-2">{title}</div>
           <div className="mt-1 flex items-center justify-between text-[11px] text-gray-400">
             <span className="truncate pr-2">{it.id}</span>
-            <a href={it.url} target="_blank" rel="noreferrer" className="hover:text-red-300">
+            <a href={it.url} target="_blank" rel="noreferrer" className="hover:text-red-300" onClick={(e) => e.stopPropagation()}>
               Open
             </a>
           </div>
@@ -441,10 +426,7 @@ export default function MusicPage() {
     };
     return (
       <div className="relative">
-        <div
-          ref={ref}
-          className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth"
-        >
+        <div ref={ref} className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth">
           {data.map((it) => (
             <div key={it.key} style={{ minWidth: 180, width: 180 }}>
               <Card it={it} />
@@ -475,15 +457,11 @@ export default function MusicPage() {
         <div className="max-w-6xl mx-auto px-6 py-14 grid gap-10 lg:grid-cols-[1.2fr_1fr] items-center">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-red-400">Featured Release</p>
-            <h1 className="mt-2 text-4xl sm:text-5xl font-bold">
-              {meta[featured?.key ?? ""] ?? "1TakeQuan — Featured"}
-            </h1>
-            <p className="mt-4 text-gray-300">
-              “The Great Quan — not a tape, a statement.”
-            </p>
+            <h1 className="mt-2 text-4xl sm:text-5xl font-bold">{meta[featured?.key ?? ""] ?? "1TakeQuan — Featured"}</h1>
+            <p className="mt-4 text-gray-300">"The Great Quan — not a tape, a statement."</p>
             <div className="mt-6 flex flex-wrap gap-3">
               <button
-                onClick={() => setPlayingKey(featured?.key ?? null)}
+                onClick={() => setModalItem(featured)}
                 className="rounded-full bg-red-500 text-white px-5 py-2.5 text-sm font-semibold hover:bg-red-400"
               >
                 ▶ Play
@@ -503,14 +481,7 @@ export default function MusicPage() {
           </div>
           <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl shadow-red-500/20">
             {featured ? (
-              <Image
-                src={featured.thumb}
-                alt="Featured artwork"
-                fill
-                className="object-cover"
-                unoptimized
-                sizes="600px"
-              />
+              <Image src={featured.thumb} alt="Featured artwork" fill className="object-cover" unoptimized sizes="600px" />
             ) : (
               <div className="w-full h-full bg-zinc-800" />
             )}
@@ -552,13 +523,9 @@ export default function MusicPage() {
         {filtered.length === 0 ? (
           <div className="text-gray-400">No results.</div>
         ) : layout === "rows" ? (
-          // Rows of 10, compact rectangular cards
           <div className="space-y-4">
             {rows.map((row, idx) => (
-              <div
-                key={idx}
-                className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-3"
-              >
+              <div key={idx} className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-3">
                 {row.map((it) => (
                   <Card key={it.key} it={it} />
                 ))}
@@ -566,7 +533,6 @@ export default function MusicPage() {
             ))}
           </div>
         ) : (
-          // Single horizontal rail, scrolls by 10 cards with arrows
           <Rail data={filtered} />
         )}
       </section>
@@ -602,16 +568,31 @@ export default function MusicPage() {
           <p className="text-sm text-gray-300 mb-4">Pick which song you want live next.</p>
           <div className="flex gap-3 flex-wrap">
             {["Song A", "Song B", "Song C"].map((s) => (
-              <button
-                key={s}
-                className="rounded-full border border-zinc-700 px-4 py-2 text-sm hover:border-red-400 hover:text-red-300"
-              >
+              <button key={s} className="rounded-full border border-zinc-700 px-4 py-2 text-sm hover:border-red-400 hover:text-red-300">
                 {s}
               </button>
             ))}
           </div>
         </div>
       </section>
+
+      {modalItem && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center" onClick={() => setModalItem(null)}>
+          <div className="bg-zinc-900 rounded-lg p-6 relative" onClick={(e) => e.stopPropagation()}>
+            <button className="absolute top-2 right-2 text-white text-2xl" onClick={() => setModalItem(null)} aria-label="Close">
+              &times;
+            </button>
+            <iframe
+              src={`${modalItem.embed}?autoplay=1&rel=0`}
+              title={meta[modalItem.key] ?? modalItem.id}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              className="w-[480px] h-[270px] rounded"
+            />
+            <div className="mt-4 text-white text-lg font-bold">{meta[modalItem.key] ?? modalItem.id}</div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
