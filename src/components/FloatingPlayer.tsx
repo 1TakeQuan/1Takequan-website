@@ -1,97 +1,182 @@
 "use client";
 
 import { usePlayer } from "@/contexts/PlayerContext";
-import { useState, useEffect, useRef } from "react";
+import { toggleFavorite } from "@/utils/toggleFavorite";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import type { Track } from "@/lib/types";
+
+type Size = { w: number; h: number };
 
 export default function FloatingPlayer() {
-  const { currentTrack, isPlaying, togglePlay, next, previous, shuffle, toggleShuffle } = usePlayer();
-  const [position, setPosition] = useState({ x: 20, y: 20 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [isRepeat, setIsRepeat] = useState(false);
-  const [isFavorite, setIsFavorite] = useState(false);
-  const dragRef = useRef<{ startX: number; startY: number } | null>(null);
+  const {
+    currentTrack,
+    isPlaying,
+    togglePlay,
+    next,
+    previous,
+    shuffle,
+    toggleShuffle,
+    playlist,
+    currentIndex,
+    setCurrentTrack,
+  } = usePlayer();
+
   const playerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+  const railRef = useRef<HTMLDivElement>(null);
+  const scrollPosRef = useRef(0);
 
-  // Set default position to bottom right on mount
+  const [position, setPosition] = useState({ x: 20, y: 20 });
+  const [size, setSize] = useState({ w: 400, h: 0 });
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
+
+  // Optional: load saved position/size
   useEffect(() => {
-    const updatePosition = () => {
-      if (typeof window === "undefined") return;
-      const width = isMinimized ? 200 : 400;
-      const height = isMinimized ? 80 : 300;
-      setPosition({
-        x: window.innerWidth - width - 20,
-        y: window.innerHeight - height - 20,
-      });
-    };
+    try {
+      const raw = localStorage.getItem("1takequan_player_ui");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed?.position) setPosition(parsed.position);
+      if (parsed?.size) setSize(parsed.size);
+      if (typeof parsed?.isMinimized === "boolean") setIsMinimized(parsed.isMinimized);
+    } catch {}
+  }, []);
 
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    return () => window.removeEventListener("resize", updatePosition);
-  }, [isMinimized]);
-
+  // Optional: save position/size
   useEffect(() => {
-    if (isDragging) {
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!dragRef.current) return;
+    try {
+      localStorage.setItem(
+        "1takequan_player_ui",
+        JSON.stringify({ position, size, isMinimized })
+      );
+    } catch {}
+  }, [position, size, isMinimized]);
+
+  // Global mouse listeners for drag/resize
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (isDragging && dragRef.current) {
+        const newX = e.clientX - dragRef.current.offsetX;
+        const newY = e.clientY - dragRef.current.offsetY;
+        const rect = playerRef.current?.getBoundingClientRect();
+        const w = rect?.width ?? size.w;
+        const h = rect?.height ?? 200;
         setPosition({
-          x: e.clientX - dragRef.current.startX,
-          y: e.clientY - dragRef.current.startY,
+          x: Math.max(8, Math.min(newX, window.innerWidth - w - 8)),
+          y: Math.max(8, Math.min(newY, window.innerHeight - h - 8)),
         });
-      };
-
-      const handleMouseUp = () => {
-        setIsDragging(false);
-        dragRef.current = null;
-      };
-
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-
-      return () => {
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-      };
-    }
-  }, [isDragging]);
-
-  // Don't render if no track - AFTER all hooks
-  if (!currentTrack) return null;
+      }
+      if (isResizing && resizeRef.current) {
+        const dx = e.clientX - resizeRef.current.startX;
+        const dy = e.clientY - resizeRef.current.startY;
+        const minW = 260;
+        const maxW = 560;
+        const minH = 200;
+        const maxH = 720;
+        setSize({
+          w: Math.max(minW, Math.min(resizeRef.current.startW + dx, maxW)),
+          h: Math.max(minH, Math.min(resizeRef.current.startH + dy, maxH)),
+        });
+      }
+    };
+    const onUp = () => {
+      setIsDragging(false);
+      setIsResizing(false);
+      dragRef.current = null;
+      resizeRef.current = null;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [isDragging, isResizing, size.w, size.h]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest(".drag-handle")) {
-      setIsDragging(true);
-      const rect = playerRef.current?.getBoundingClientRect();
-      if (rect) {
-        dragRef.current = {
-          startX: e.clientX - rect.left,
-          startY: e.clientY - rect.top,
-        };
-      }
-    }
+    // Only drag when clicking the header (drag-handle)
+    if (!(e.target as HTMLElement).closest(".drag-handle")) return;
+
+    e.preventDefault();
+    setIsDragging(true);
+
+    const rect = playerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    dragRef.current = {
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+    };
   };
 
-  const toggleFavorite = () => {
-    setIsFavorite(!isFavorite);
-    console.log("Toggle favorite:", currentTrack.id, !isFavorite);
+  const handleResizeDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+
+    const rect = playerRef.current?.getBoundingClientRect();
+    const startW = rect?.width ?? size.w;
+    const startH = rect?.height ?? 360;
+
+    resizeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startW,
+      startH,
+    };
+
+    // If you're "auto height" right now, force a starting height so resizing works nicely
+    if (size.h === 0) setSize({ w: startW, h: startH });
   };
+
+  const onScroll = () => {
+    if (!railRef.current) return;
+    scrollPosRef.current = railRef.current.scrollLeft;
+  };
+
+  const onSelectTrack = (track: Track) => {
+    // save scroll position
+    if (railRef.current) scrollPosRef.current = railRef.current.scrollLeft;
+
+    setCurrentTrack(track);
+
+    // restore scroll position after render
+    requestAnimationFrame(() => {
+      if (railRef.current) railRef.current.scrollLeft = scrollPosRef.current;
+    });
+  };
+
+  const isFavorite: boolean = currentTrack ? favorites.includes(currentTrack.id) : false;
+
+  // safe to return early after all hooks
+  if (!currentTrack) return null;
 
   return (
     <div
       ref={playerRef}
-      className={`fixed z-50 bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl transition-all ${
+      className={`fixed z-50 bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl w-[92vw] max-w-[420px] sm:w-[380px] transition-all ${
         isDragging ? "cursor-grabbing" : ""
       }`}
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
-        width: isMinimized ? "200px" : "400px",
+        width: size.w,
+        height: isMinimized ? 64 : size.h || "auto",
+        minWidth: 260,
+        minHeight: isMinimized ? 64 : 200,
+        maxWidth: 560,
+        maxHeight: 720,
+        userSelect: isDragging || isResizing ? "none" : undefined,
       }}
       onMouseDown={handleMouseDown}
     >
       {/* Header */}
-      <div className="drag-handle flex items-center justify-between p-4 cursor-grab active:cursor-grabbing border-b border-zinc-800">
+      <div className="drag-handle touch-none select-none flex items-center justify-between p-4 cursor-grab active:cursor-grabbing border-b border-zinc-800">
         <div className="flex items-center gap-2">
           <svg className="w-5 h-5 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
             <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
@@ -174,7 +259,7 @@ export default function FloatingPlayer() {
             </button>
 
             <button
-              onClick={toggleFavorite}
+              onClick={() => toggleFavorite(currentTrack.id, favorites, setFavorites)}
               className={`${isFavorite ? "text-red-500" : "text-gray-400"} hover:text-red-400 transition`}
               title="Favorite"
             >
@@ -182,6 +267,23 @@ export default function FloatingPlayer() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
               </svg>
             </button>
+          </div>
+
+          {/* Playlist */}
+          <div
+            ref={railRef}
+            className="max-h-40 overflow-y-auto mt-4 rounded bg-zinc-800 p-2"
+            onScroll={onScroll}
+          >
+            {playlist.map((track, idx) => (
+              <div
+                key={track.id}
+                className={`p-2 rounded cursor-pointer ${idx === currentIndex ? "bg-red-500/30 text-white" : "hover:bg-zinc-700"}`}
+                onClick={() => onSelectTrack(track)}
+              >
+                {track.title}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -213,4 +315,16 @@ export default function FloatingPlayer() {
       )}
     </div>
   );
+}
+
+async function fetchTitleFromVideoId(videoId: string): Promise<string | undefined> {
+  try {
+    const yt = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(yt)}`);
+    if (!res.ok) return;
+    const data = (await res.json()) as { title?: string };
+    return data.title;
+  } catch {
+    return;
+  }
 }

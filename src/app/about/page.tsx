@@ -94,11 +94,20 @@ export default function AboutPage() {
     // Load gallery items and build random placements
     (async () => {
       try {
-        const res = await fetch("/api/gallery", { cache: "no-store" });
+        const res = await fetch("/api/media", { cache: "no-store" });
         const data = await res.json();
-        const items: GalleryItem[] = (data?.items || []).filter(
-          (i: GalleryItem) => i.type === "photo" || i.type === "video"
-        );
+        const items: GalleryItem[] = [
+          ...(data.images || []).map((filename: string) => ({
+            type: "photo",
+            src: `/gallery/${filename}`,
+            name: filename,
+          })),
+          ...(data.youtube || []).map((url: string) => ({
+            type: "video",
+            src: url,
+            name: url,
+          })),
+        ];
 
         const shuffled = shuffle(items);
 

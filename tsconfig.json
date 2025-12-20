@@ -8,6 +8,10 @@
     },
     "jsx": "preserve",
     "module": "esnext",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
@@ -35,7 +39,7 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    "src/app/api/events/route.js"
+    "src/app/api/events/route.ts"
   ],
   "exclude": [
     "node_modules"

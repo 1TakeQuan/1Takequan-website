@@ -55,9 +55,9 @@ export default function HomePage() {
   // Load latest 3 YouTube Music tracks
   useEffect(() => {
     const youtubeLinks = [
-      "https://music.youtube.com/watch?v=i_a2LhIVhJk&si=b-OhpkriOruRV7u1",
-      "https://music.youtube.com/watch?v=Pmwz7F8a8qk&si=FyVWJcr_TmTbZM0q",
-      "https://music.youtube.com/watch?v=IFqMzjHBVRs&si=OHI8DyBgiSCL7E35",
+      "https://music.youtube.com/watch?v=fClzw0x4WQQ&si=EGXALCLhqppbNbmf",
+      "https://music.youtube.com/watch?v=9fo8k5-EkkA&si=BCI_oOMJtKrYXkCR",
+      "https://music.youtube.com/watch?v=vnnwnhSpthw&si=1AdOVFAkePoeuzX6",
     ];
 
     const tracks: YouTubeTrack[] = youtubeLinks.map((url) => {
@@ -225,7 +225,7 @@ export default function HomePage() {
                     {meta[track.id] || "Loading..."}
                   </h3>
                   <a
-                    href={track.url}
+                    href={`https://www.youtube.com/watch?v=${track.id}`}
                     target="_blank"
                     rel="noreferrer"
                     className="text-sm text-orange-400 hover:text-orange-300 inline-flex items-center gap-1"
@@ -328,4 +328,16 @@ export default function HomePage() {
       <SignupBar />
     </div>
   );
+}
+
+async function fetchTitleFromVideoId(videoId: string): Promise<string | undefined> {
+  try {
+    const yt = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(yt)}`);
+    if (!res.ok) return;
+    const data = (await res.json()) as { title?: string };
+    return data.title;
+  } catch {
+    return;
+  }
 }

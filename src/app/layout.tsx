@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { PlayerProvider } from "@/contexts/PlayerContext";
+import ClientProviders from "./ClientProviders";
 import LayoutContent from "@/components/LayoutContent";
+import { PlayerProvider, usePlayer } from "@/contexts/PlayerContext";
 
 export const metadata: Metadata = {
   title: "1TakeQuan - Official Website",
@@ -16,9 +17,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* ...other head tags... */}
       </head>
       <body className="bg-black text-white">
-        <PlayerProvider>
-          <LayoutContent>{children}</LayoutContent>
-        </PlayerProvider>
+        <ClientProviders>
+          <PlayerProvider>
+            <LayoutContent>{children}</LayoutContent>
+            {/* <FloatingPlayer /> */}
+          </PlayerProvider>
+        </ClientProviders>
       </body>
     </html>
   );

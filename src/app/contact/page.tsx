@@ -2,8 +2,8 @@
 import { useState } from "react";
 
 const TOPICS = [
-  "Features",
   "Bookings",
+  "Features",
   "Events",
   "Interviews",
   "Club Hosting",
@@ -50,49 +50,18 @@ export default function ContactPage() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <h1 className="text-4xl font-bold">Contact 1TakeQuan</h1>
-
-      <p className="mt-2 text-white/70">
-        What’s the deal — tap in. If it’s business, choose what you need and drop the details. I’ll get back to you.
+    <div className="max-w-xl mx-auto px-4 py-8">
+      <h1 className="text-3xl font-bold">Tap in</h1>
+      <p className="text-zinc-400 mt-2">
+        @1TakeQuan &bull;{" "}
+        <a href="mailto:1TakeQuanBooking@gmail.com" className="underline">
+          1TakeQuanBooking@gmail.com
+        </a>
       </p>
 
-      <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5">
-        <div className="grid gap-3 sm:grid-cols-2 text-sm">
-          <div>
-            <div className="text-white/60">Social</div>
-            <div className="font-semibold">@1TakeQuan</div>
-          </div>
-          <div>
-            <div className="text-white/60">Email</div>
-            <a className="underline font-semibold" href="mailto:1TakeQuanBooking@gmail.com">
-              1TakeQuanBooking@gmail.com
-            </a>
-          </div>
-        </div>
-      </div>
-
-      <form onSubmit={onSubmit} className="mt-6 grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-5">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <input
-            className="rounded-xl bg-black/40 border border-white/10 p-3 outline-none"
-            placeholder="Your name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <input
-            className="rounded-xl bg-black/40 border border-white/10 p-3 outline-none"
-            placeholder="Your email"
-            type="email"
-            value={fromEmail}
-            onChange={(e) => setFromEmail(e.target.value)}
-            required
-          />
-        </div>
-
+      <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <select
-          className="rounded-xl bg-black/40 border border-white/10 p-3 outline-none"
+          className="w-full p-4 rounded-xl bg-zinc-950 border border-zinc-800"
           value={topic}
           onChange={(e) => setTopic(e.target.value as Topic)}
         >
@@ -103,9 +72,23 @@ export default function ContactPage() {
           ))}
         </select>
 
+        <input
+          className="w-full p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          placeholder="Your name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <input
+          className="w-full p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          placeholder="Your email or IG"
+          value={fromEmail}
+          onChange={(e) => setFromEmail(e.target.value)}
+          required
+        />
         <textarea
-          className="min-h-[160px] rounded-xl bg-black/40 border border-white/10 p-3 outline-none"
-          placeholder="Drop the details… budget, dates, city, what you need, timeline, links."
+          className="w-full min-h-[160px] p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          placeholder="What you trying to do?"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           required
@@ -114,9 +97,9 @@ export default function ContactPage() {
         <button
           type="submit"
           disabled={status === "sending"}
-          className="rounded-xl bg-white/15 hover:bg-white/20 border border-white/10 p-3 font-semibold disabled:opacity-60"
+          className="w-full p-4 rounded-xl bg-orange-500 font-bold text-black disabled:opacity-60"
         >
-          {status === "sending" ? "Sending..." : "Send Private Message"}
+          {status === "sending" ? "Sending..." : "Send message"}
         </button>
 
         {status === "sent" && (
@@ -127,6 +110,6 @@ export default function ContactPage() {
           <p className="text-sm text-red-300">❌ {errorMsg}</p>
         )}
       </form>
-    </main>
+    </div>
   );
 }

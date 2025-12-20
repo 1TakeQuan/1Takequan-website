@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePlayer } from "@/contexts/PlayerContext";
 
 const rawLinks: string[] = [
   "https://music.youtube.com/watch?v=i_a2LhIVhJk&si=b-OhpkriOruRV7u1",
@@ -337,10 +338,23 @@ async function fetchTitle(url: string): Promise<string | undefined> {
   }
 }
 
+async function fetchTitleFromVideoId(videoId: string): Promise<string | undefined> {
+  try {
+    const yt = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(yt)}`);
+    if (!res.ok) return;
+    const data = (await res.json()) as { title?: string };
+    return data.title;
+  } catch {
+    return;
+  }
+}
+
 const FEATURED_ID = ""; // set a key from your catalog (e.g., "video:XXXXX")
 
 export default function MusicPage() {
   const items = useMemo(() => buildItems(rawLinks), []);
+  const { setPlaylist, currentTrack, currentIndex } = usePlayer();
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [modalItem, setModalItem] = useState<Item | null>(null);
   const [query, setQuery] = useState("");
@@ -365,6 +379,41 @@ export default function MusicPage() {
       cancelled = true;
     };
   }, [items]);
+
+  const tracks = useMemo(() => {
+    return items.map((it) => ({
+      id: it.id,
+      title: meta[it.key] ?? meta[it.id] ?? it.title ?? it.id, // more fallbacks
+      cover: it.thumb,
+      artists: ["1TakeQuan"],
+      sources: { youtube: it.url },
+    }));
+  }, [items, meta]);
+
+  const didInit = useRef(false);
+  const didTitleRefresh = useRef(false);
+
+  useEffect(() => {
+    // only initialize once (prevents scroll/player resets)
+    if (didInit.current) return;
+    if (tracks.length === 0) return;
+
+    setPlaylist(tracks, 0);
+    didInit.current = true;
+  }, [tracks, setPlaylist]);
+
+  useEffect(() => {
+    // once meta is loaded, refresh titles without changing what's playing
+    if (!didInit.current) return;
+    if (didTitleRefresh.current) return;
+    if (!meta || Object.keys(meta).length === 0) return;
+
+    const currentId = currentTrack?.id;
+    const idx = currentId ? tracks.findIndex(t => t.id === currentId) : currentIndex;
+    setPlaylist(tracks, idx >= 0 ? idx : 0);
+
+    didTitleRefresh.current = true;
+  }, [meta, tracks, currentTrack?.id, currentIndex, setPlaylist]);
 
   const featured = items.find((it) => it.key === FEATURED_ID) ?? items[0];
   const filtered = useMemo(() => {
@@ -419,11 +468,33 @@ export default function MusicPage() {
 
   const Rail = ({ data }: { data: Item[] }) => {
     const ref = useRef<HTMLDivElement>(null);
-    const CARD_W = 192; // px incl. gap target (fits ~10 per desktop width)
+    const scrollPos = useRef(0);
+
+    const CARD_W = 192;
     const scrollByCards = (dir: number) => {
       if (!ref.current) return;
       ref.current.scrollBy({ left: dir * CARD_W * 10, behavior: "smooth" });
     };
+
+    useEffect(() => {
+      const el = ref.current;
+      if (!el) return;
+
+      const onScroll = () => {
+        scrollPos.current = el.scrollLeft;
+      };
+
+      el.addEventListener("scroll", onScroll, { passive: true });
+      return () => el.removeEventListener("scroll", onScroll);
+    }, []);
+
+    useEffect(() => {
+      const el = ref.current;
+      if (!el) return;
+      // restore after re-render / data changes
+      el.scrollLeft = scrollPos.current;
+    }, [data.length]);
+
     return (
       <div className="relative">
         <div ref={ref} className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth">
