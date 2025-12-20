@@ -28,234 +28,236 @@ export default function FloatingPlayer() {
   const railRef = useRef<HTMLDivElement>(null);
   const scrollPosRef = useRef(0);
 
-  const [position, setPosition] = useState({ x: 20, y: 20 });
-  const [size, setSize] = useState({ w: 400, h: 0 });
-  const [isMinimized, setIsMinimized] = useState(false);
+  // ✅ start minimized on load (mobile friendly)
+  const [isMinimized, setIsMinimized] = useState(true);
+
+  // ✅ start near bottom-right (better than 20,20 on phones)
+  const [position, setPosition] = useState({ x: 16, y: 16 });
+  const [size, setSize] = useState<Size>({ w: 360, h: 0 });
+
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
 
-  // Optional: load saved position/size
+  // Load saved UI
   useEffect(() => {
     try {
       const raw = localStorage.getItem("1takequan_player_ui");
       if (!raw) return;
       const parsed = JSON.parse(raw);
+
       if (parsed?.position) setPosition(parsed.position);
       if (parsed?.size) setSize(parsed.size);
       if (typeof parsed?.isMinimized === "boolean") setIsMinimized(parsed.isMinimized);
     } catch {}
   }, []);
 
-  // Optional: save position/size
+  // Save UI
   useEffect(() => {
     try {
-      localStorage.setItem(
-        "1takequan_player_ui",
-        JSON.stringify({ position, size, isMinimized })
-      );
+      localStorage.setItem("1takequan_player_ui", JSON.stringify({ position, size, isMinimized }));
     } catch {}
   }, [position, size, isMinimized]);
 
-  // Global mouse listeners for drag/resize
+  // Clamp to viewport (prevents disappearing off-screen)
+  const clampToViewport = (x: number, y: number, w: number, h: number) => {
+    const pad = 8;
+    const maxX = Math.max(pad, window.innerWidth - w - pad);
+    const maxY = Math.max(pad, window.innerHeight - h - pad);
+    return {
+      x: Math.max(pad, Math.min(x, maxX)),
+      y: Math.max(pad, Math.min(y, maxY)),
+    };
+  };
+
+  // Pointer move/up listeners (mobile + desktop)
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (isDragging && dragRef.current) {
+    const onMove = (e: PointerEvent) => {
+      if (isDragging && dragRef.current && playerRef.current) {
+        const rect = playerRef.current.getBoundingClientRect();
+        const w = rect.width;
+        const h = rect.height;
+
         const newX = e.clientX - dragRef.current.offsetX;
         const newY = e.clientY - dragRef.current.offsetY;
-        const rect = playerRef.current?.getBoundingClientRect();
-        const w = rect?.width ?? size.w;
-        const h = rect?.height ?? 200;
-        setPosition({
-          x: Math.max(8, Math.min(newX, window.innerWidth - w - 8)),
-          y: Math.max(8, Math.min(newY, window.innerHeight - h - 8)),
-        });
+
+        setPosition(clampToViewport(newX, newY, w, h));
       }
-      if (isResizing && resizeRef.current) {
+
+      if (isResizing && resizeRef.current && playerRef.current) {
         const dx = e.clientX - resizeRef.current.startX;
         const dy = e.clientY - resizeRef.current.startY;
+
         const minW = 260;
-        const maxW = 560;
+        const maxW = Math.min(560, window.innerWidth - 16);
         const minH = 200;
-        const maxH = 720;
-        setSize({
-          w: Math.max(minW, Math.min(resizeRef.current.startW + dx, maxW)),
-          h: Math.max(minH, Math.min(resizeRef.current.startH + dy, maxH)),
-        });
+        const maxH = Math.min(720, window.innerHeight - 16);
+
+        const nextW = Math.max(minW, Math.min(resizeRef.current.startW + dx, maxW));
+        const nextH = Math.max(minH, Math.min(resizeRef.current.startH + dy, maxH));
+
+        setSize({ w: nextW, h: nextH });
       }
     };
+
     const onUp = () => {
       setIsDragging(false);
       setIsResizing(false);
       dragRef.current = null;
       resizeRef.current = null;
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [isDragging, isResizing, size.w, size.h]);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    // Only drag when clicking the header (drag-handle)
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [isDragging, isResizing]);
+
+  // Keep it clamped when screen resizes / orientation changes
+  useEffect(() => {
+    const onResize = () => {
+      const rect = playerRef.current?.getBoundingClientRect();
+      const w = rect?.width ?? size.w;
+      const h = rect?.height ?? (isMinimized ? 64 : size.h || 360);
+      setPosition((p) => clampToViewport(p.x, p.y, w, h));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [size.w, size.h, isMinimized]);
+
+  const handlePointerDownDrag = (e: React.PointerEvent) => {
+    // only drag via header handle
     if (!(e.target as HTMLElement).closest(".drag-handle")) return;
 
     e.preventDefault();
-    setIsDragging(true);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
 
     const rect = playerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    dragRef.current = {
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-    };
+    setIsDragging(true);
+    dragRef.current = { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
   };
 
-  const handleResizeDown = (e: React.MouseEvent) => {
+  const handlePointerDownResize = (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsResizing(true);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
 
     const rect = playerRef.current?.getBoundingClientRect();
     const startW = rect?.width ?? size.w;
     const startH = rect?.height ?? 360;
 
-    resizeRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startW,
-      startH,
-    };
+    setIsResizing(true);
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, startW, startH };
 
-    // If you're "auto height" right now, force a starting height so resizing works nicely
     if (size.h === 0) setSize({ w: startW, h: startH });
   };
 
-  const onScroll = () => {
-    if (!railRef.current) return;
-    scrollPosRef.current = railRef.current.scrollLeft;
-  };
-
   const onSelectTrack = (track: Track) => {
-    // save scroll position
-    if (railRef.current) scrollPosRef.current = railRef.current.scrollLeft;
+    if (railRef.current) scrollPosRef.current = railRef.current.scrollTop;
 
     setCurrentTrack(track);
 
-    // restore scroll position after render
     requestAnimationFrame(() => {
-      if (railRef.current) railRef.current.scrollLeft = scrollPosRef.current;
+      if (railRef.current) railRef.current.scrollTop = scrollPosRef.current;
     });
   };
 
-  const isFavorite: boolean = currentTrack ? favorites.includes(currentTrack.id) : false;
+  const isFavorite = currentTrack ? favorites.includes(currentTrack.id) : false;
 
-  // safe to return early after all hooks
+  // ✅ safe early return AFTER hooks
   if (!currentTrack) return null;
+
+  const minimizedH = 64;
+  const expandedH = size.h || "auto";
 
   return (
     <div
       ref={playerRef}
-      className={`fixed z-50 bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl w-[92vw] max-w-[420px] sm:w-[380px] transition-all ${
+      className={`fixed z-50 bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl transition-all ${
         isDragging ? "cursor-grabbing" : ""
       }`}
       style={{
-        left: `${position.x}px`,
-        top: `${position.y}px`,
-        width: size.w,
-        height: isMinimized ? 64 : size.h || "auto",
+        left: position.x,
+        top: position.y,
+        width: `min(${size.w}px, 92vw)`,
+        height: isMinimized ? minimizedH : expandedH,
         minWidth: 260,
-        minHeight: isMinimized ? 64 : 200,
+        minHeight: isMinimized ? minimizedH : 200,
         maxWidth: 560,
         maxHeight: 720,
         userSelect: isDragging || isResizing ? "none" : undefined,
+        touchAction: "none", // key for mobile drag
       }}
-      onMouseDown={handleMouseDown}
+      onPointerDown={handlePointerDownDrag}
     >
-      {/* Header */}
-      <div className="drag-handle touch-none select-none flex items-center justify-between p-4 cursor-grab active:cursor-grabbing border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-          <svg className="w-5 h-5 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
-          </svg>
-          <span className="text-sm font-semibold text-white">Now Playing</span>
+      {/* Header (drag handle) */}
+      <div className="drag-handle touch-none select-none flex items-center justify-between p-3 cursor-grab active:cursor-grabbing border-b border-zinc-800">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-white truncate">
+            {isMinimized ? currentTrack.title : "Now Playing"}
+          </span>
         </div>
+
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setIsMinimized(!isMinimized)}
+            onClick={() => setIsMinimized((v) => !v)}
             className="text-gray-400 hover:text-white transition"
+            aria-label="Toggle minimize"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isMinimized ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d={isMinimized ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"}
+              />
             </svg>
           </button>
         </div>
       </div>
 
-      {/* Player Content */}
+      {/* Expanded */}
       {!isMinimized && (
         <div className="p-4 space-y-4">
-          {/* Album Art */}
           <div className="relative aspect-square rounded-lg overflow-hidden bg-zinc-800">
             {currentTrack.cover ? (
               <Image src={currentTrack.cover} alt={currentTrack.title} fill className="object-cover" />
             ) : (
-              <div className="flex items-center justify-center h-full">
-                <svg className="w-16 h-16 text-zinc-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
-                </svg>
-              </div>
+              <div className="flex items-center justify-center h-full text-zinc-500">No cover</div>
             )}
           </div>
 
-          {/* Track Info */}
           <div className="text-center">
             <h3 className="font-bold text-white truncate">{currentTrack.title}</h3>
-            <p className="text-sm text-gray-400 truncate">
-              {currentTrack.artists?.join(", ") || "1TakeQuan"}
-            </p>
+            <p className="text-sm text-gray-400 truncate">{currentTrack.artists?.join(", ") || "1TakeQuan"}</p>
           </div>
 
-          {/* Controls */}
           <div className="flex items-center justify-center gap-4">
             <button
               onClick={toggleShuffle}
               className={`${shuffle ? "text-orange-500" : "text-gray-400"} hover:text-white transition`}
               title="Shuffle"
             >
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M3 5h8.5a2.5 2.5 0 015 0H19v2h-2.5a2.5 2.5 0 00-5 0H3V5zm0 8h8.5a2.5 2.5 0 015 0H19v2h-2.5a2.5 2.5 0 01-5 0H3v-2z" />
-              </svg>
+              Shuffle
             </button>
 
             <button onClick={previous} className="text-gray-400 hover:text-white transition">
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M8.445 14.832A1 1 0 0010 14v-2.798l5.445 3.63A1 1 0 0017 14V6a1 1 0 00-1.555-.832L10 8.798V6a1 1 0 00-1.555-.832l-6 4a1 1 0 000 1.664l6 4z" />
-              </svg>
+              Prev
             </button>
 
             <button
               onClick={togglePlay}
               className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center hover:scale-110 transition shadow-lg"
             >
-              {isPlaying ? (
-                <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" />
-                </svg>
-              ) : (
-                <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                </svg>
-              )}
+              {isPlaying ? "Pause" : "Play"}
             </button>
 
             <button onClick={next} className="text-gray-400 hover:text-white transition">
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M4.555 5.168A1 1 0 003 6v8a1 1 0 001.555.832L10 11.202V14a1 1 0 001.555.832l6-4a1 1 0 000-1.664l-6-4A1 1 0 0010 6v2.798l-5.445-3.63z" />
-              </svg>
+              Next
             </button>
 
             <button
@@ -263,54 +265,55 @@ export default function FloatingPlayer() {
               className={`${isFavorite ? "text-red-500" : "text-gray-400"} hover:text-red-400 transition`}
               title="Favorite"
             >
-              <svg className="w-5 h-5" fill={isFavorite ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-              </svg>
+              ♥
             </button>
           </div>
 
-          {/* Playlist */}
-          <div
-            ref={railRef}
-            className="max-h-40 overflow-y-auto mt-4 rounded bg-zinc-800 p-2"
-            onScroll={onScroll}
-          >
+          <div ref={railRef} className="max-h-40 overflow-y-auto mt-4 rounded bg-zinc-800 p-2">
             {playlist.map((track, idx) => (
-              <div
+              <button
                 key={track.id}
-                className={`p-2 rounded cursor-pointer ${idx === currentIndex ? "bg-red-500/30 text-white" : "hover:bg-zinc-700"}`}
+                className={`w-full text-left p-2 rounded ${
+                  idx === currentIndex ? "bg-red-500/30 text-white" : "hover:bg-zinc-700 text-gray-200"
+                }`}
                 onClick={() => onSelectTrack(track)}
               >
                 {track.title}
-              </div>
+              </button>
             ))}
           </div>
+
+          {/* Resize handle */}
+          <div
+            onPointerDown={handlePointerDownResize}
+            className="absolute right-2 bottom-2 w-6 h-6 rounded bg-white/10 hover:bg-white/20 cursor-nwse-resize"
+            aria-label="Resize player"
+            title="Resize"
+          />
         </div>
       )}
 
-      {/* Minimized View */}
+      {/* Minimized view */}
       {isMinimized && (
-        <div className="p-3 flex items-center gap-3">
+        <div className="p-2 flex items-center gap-3">
           <button
             onClick={togglePlay}
-            className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center hover:scale-110 transition flex-shrink-0"
+            className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center flex-shrink-0"
           >
-            {isPlaying ? (
-              <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-              </svg>
-            )}
+            {isPlaying ? "||" : "▶"}
           </button>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-white truncate">{currentTrack.title}</div>
-            <div className="text-xs text-gray-400 truncate">
-              {currentTrack.artists?.join(", ") || "1TakeQuan"}
-            </div>
+            <div className="text-xs text-gray-400 truncate">{currentTrack.artists?.join(", ") || "1TakeQuan"}</div>
           </div>
+
+          {/* small resize handle even when minimized */}
+          <div
+            onPointerDown={handlePointerDownResize}
+            className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 cursor-nwse-resize"
+            aria-label="Resize player"
+            title="Resize"
+          />
         </div>
       )}
     </div>
