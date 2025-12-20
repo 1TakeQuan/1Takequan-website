@@ -74,6 +74,15 @@ export default function QuanRunnerPage() {
 
     let animationId: number;
 
+    const metrics = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+      const groundY = h - 50;
+      const playerSize = Math.max(36, Math.min(50, w / 12));
+      return { w, h, groundY, playerSize };
+    };
+
     const drawPlayer = () => {
       const { x, y } = gameRef.current.player;
 
@@ -200,8 +209,9 @@ export default function QuanRunnerPage() {
       if (game.frame % 100 === 0) {
         const type = Math.random() > 0.5 ? "block" : "spike";
         const height = type === "spike" ? 40 : 30 + Math.random() * 40;
+        const { w, h, groundY: GROUND_Y, playerSize: PLAYER_SIZE } = metrics();
         game.obstacles.push({
-          x: canvas.width,
+          x: w, // Spawn at the right edge of the canvas
           width: type === "spike" ? 30 : 40,
           height,
           type,
@@ -210,9 +220,10 @@ export default function QuanRunnerPage() {
 
       // Coins
       if (game.frame % 80 === 0) {
+        const { w, groundY, playerSize } = metrics();
         game.coins.push({
-          x: canvas.width,
-          y: GROUND_Y - 100 - Math.random() * 100,
+          x: w,
+          y: GROUND_Y - 100 - Math.random() * 100, // keep y axis as is
           collected: false,
         });
       }
@@ -340,8 +351,23 @@ export default function QuanRunnerPage() {
   }, [gameState, endGame, logoLoaded]);
 
   const startGame = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+    const groundY = h - 50;
+    const playerSize = Math.max(36, Math.min(50, w / 12));
+
     gameRef.current = {
-      player: { x: 100, y: 265, velocityY: 0, isJumping: false, jumpsRemaining: 2 },
+      player: {
+        x: 100,
+        y: groundY - playerSize - 35,
+        velocityY: 0,
+        isJumping: false,
+        jumpsRemaining: 2,
+      },
       obstacles: [],
       coins: [],
       frame: 0,
@@ -349,7 +375,9 @@ export default function QuanRunnerPage() {
       animationFrame: 0,
       internalScore: 0,
     };
+
     setScore(0);
+    scoreRef.current = 0;
     setGameState("playing");
   };
 
