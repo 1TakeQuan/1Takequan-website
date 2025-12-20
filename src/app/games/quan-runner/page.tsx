@@ -7,6 +7,11 @@ import Image from "next/image";
 export default function QuanRunnerPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
+
+  // Add these lines below your other refs:
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const scoreRef = useRef(0);
+
   const [gameState, setGameState] = useState<"menu" | "playing" | "gameOver">("menu");
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
@@ -57,9 +62,14 @@ export default function QuanRunnerPage() {
     if (!ctx) return;
 
     const GRAVITY = 0.8;
-    const JUMP_POWER = -15;
-    const GROUND_Y = 350;
-    const PLAYER_SIZE = 50;
+    const JUMP_POWER = -16;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
+
+    const GROUND_Y = height - 50;
+    const PLAYER_SIZE = Math.max(36, Math.min(50, width / 12));
     const MAX_JUMPS = 2;
 
     let animationId: number;
@@ -240,7 +250,8 @@ export default function QuanRunnerPage() {
 
       // Distance score
       game.internalScore += 1;
-      if (game.frame % 5 === 0) {
+      scoreRef.current = game.internalScore; // <-- update the ref
+      if (game.frame % 15 === 0) {
         setScore(game.internalScore);
       }
     };
@@ -272,13 +283,22 @@ export default function QuanRunnerPage() {
         ctx.fillStyle = "white";
         ctx.font = "bold 24px Arial";
         ctx.textAlign = "left";
-        ctx.fillText(`Score: ${score}`, 20, 40);
+        ctx.fillText(`Score: ${scoreRef.current}`, 20, 40);
         ctx.fillText(`Speed: ${gameRef.current.speed.toFixed(1)}x`, 20, 70);
         ctx.fillText(
           `Jumps: ${gameRef.current.player.jumpsRemaining}/${MAX_JUMPS}`,
           20,
           100
         );
+      }
+
+      // Add this inside the render function, after drawing the background and before animationId = requestAnimationFrame(render);
+      // Only show the hint when in menu state and on small screens:
+      if (gameState === "menu" && width < 600) {
+        ctx.font = "bold 16px Arial";
+        ctx.fillStyle = "#fbbf24";
+        ctx.textAlign = "right";
+        ctx.fillText("TAP TO JUMP", width - 20, 40);
       }
 
       animationId = requestAnimationFrame(render);
@@ -300,19 +320,24 @@ export default function QuanRunnerPage() {
       }
     };
 
-    const handleClick = () => jump();
+    const handlePointerDown = (e: PointerEvent) => {
+      e.preventDefault();
+      jump();
+    };
 
-    canvas.addEventListener("click", handleClick);
+    canvas.style.touchAction = "none";
+    canvas.addEventListener("pointerdown", handlePointerDown);
+
     window.addEventListener("keydown", handleKeyPress);
 
-    if (gameState === "playing") render();
+    render(); // ALWAYS run render loop
 
     return () => {
       cancelAnimationFrame(animationId);
-      canvas.removeEventListener("click", handleClick);
+      canvas.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyPress);
     };
-  }, [gameState, endGame, logoLoaded, score]);
+  }, [gameState, endGame, logoLoaded]);
 
   const startGame = () => {
     gameRef.current = {
@@ -328,8 +353,40 @@ export default function QuanRunnerPage() {
     setGameState("playing");
   };
 
+  // Add this useEffect after your other useEffects, and make sure your main container uses ref={wrapRef}
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    const resize = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const cssW = Math.min(wrap.clientWidth, 480); // phone-first
+      const cssH = Math.round(cssW * 0.6); // slightly taller for jump visibility
+
+      canvas.style.width = `${cssW}px`;
+      canvas.style.height = `${cssH}px`;
+
+      canvas.width = Math.floor(cssW * dpr);
+      canvas.height = Math.floor(cssH * dpr);
+
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS pixels
+    };
+
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
+
+    window.addEventListener("orientationchange", resize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("orientationchange", resize);
+    };
+  }, []);
+
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
+    <div ref={wrapRef} className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
       <div className="max-w-2xl w-full">
         <Link
           href="/games"
@@ -347,7 +404,13 @@ export default function QuanRunnerPage() {
         <p className="text-gray-400 mb-6">Run through LA, dodge obstacles, and collect coins!</p>
 
         <div className="relative bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
-          <canvas ref={canvasRef} width={600} height={400} className="w-full touch-none" />
+          <canvas
+            ref={canvasRef}
+            width={600}
+            height={400}
+            className="w-full touch-none select-none"
+            onContextMenu={(e) => e.preventDefault()}
+          />
 
           {gameState === "menu" && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
