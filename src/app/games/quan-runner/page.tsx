@@ -5,6 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 
 export default function QuanRunnerPage() {
+  const MAX_JUMPS = 2;
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
@@ -64,98 +66,91 @@ export default function QuanRunnerPage() {
     const GRAVITY = 0.8;
     const JUMP_POWER = -16;
 
-    const dpr = window.devicePixelRatio || 1;
-    const width = canvas.width / dpr;
-    const height = canvas.height / dpr;
-
-    const GROUND_Y = height - 50;
-    const PLAYER_SIZE = Math.max(36, Math.min(50, width / 12));
-    const MAX_JUMPS = 2;
-
     let animationId: number;
 
     const metrics = () => {
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const w = canvas.width / dpr;
-      const h = canvas.height / dpr;
+      const w = canvas.width / dpr;   // CSS pixels
+      const h = canvas.height / dpr;  // CSS pixels
       const groundY = h - 50;
       const playerSize = Math.max(36, Math.min(50, w / 12));
       return { w, h, groundY, playerSize };
     };
 
     const drawPlayer = () => {
+      const { playerSize } = metrics();
       const { x, y } = gameRef.current.player;
 
-      // Body (simple running figure)
       ctx.strokeStyle = "#ef4444";
       ctx.lineWidth = 4;
       ctx.lineCap = "round";
-      
-      // Use time-based animation instead of frame-based for consistent speed
-      const time = Date.now() * 0.01; // Consistent timing
+
+      const time = Date.now() * 0.01;
       const legAnim = Math.sin(time) * 10;
 
       // Torso
       ctx.beginPath();
-      ctx.moveTo(x + PLAYER_SIZE / 2, y + PLAYER_SIZE);
-      ctx.lineTo(x + PLAYER_SIZE / 2, y + PLAYER_SIZE + 20);
+      ctx.moveTo(x + playerSize / 2, y + playerSize);
+      ctx.lineTo(x + playerSize / 2, y + playerSize + 20);
       ctx.stroke();
 
       // Left leg
       ctx.beginPath();
-      ctx.moveTo(x + PLAYER_SIZE / 2, y + PLAYER_SIZE + 20);
-      ctx.lineTo(x + PLAYER_SIZE / 2 - 8, y + PLAYER_SIZE + 35 + legAnim);
+      ctx.moveTo(x + playerSize / 2, y + playerSize + 20);
+      ctx.lineTo(x + playerSize / 2 - 8, y + playerSize + 35 + legAnim);
       ctx.stroke();
 
       // Right leg
       ctx.beginPath();
-      ctx.moveTo(x + PLAYER_SIZE / 2, y + PLAYER_SIZE + 20);
-      ctx.lineTo(x + PLAYER_SIZE / 2 + 8, y + PLAYER_SIZE + 35 - legAnim);
+      ctx.moveTo(x + playerSize / 2, y + playerSize + 20);
+      ctx.lineTo(x + playerSize / 2 + 8, y + playerSize + 35 - legAnim);
       ctx.stroke();
 
       // Left arm
       ctx.beginPath();
-      ctx.moveTo(x + PLAYER_SIZE / 2, y + PLAYER_SIZE + 5);
-      ctx.lineTo(x + PLAYER_SIZE / 2 - 12, y + PLAYER_SIZE + 15 - legAnim);
+      ctx.moveTo(x + playerSize / 2, y + playerSize + 5);
+      ctx.lineTo(x + playerSize / 2 - 12, y + playerSize + 15 - legAnim);
       ctx.stroke();
 
       // Right arm
       ctx.beginPath();
-      ctx.moveTo(x + PLAYER_SIZE / 2, y + PLAYER_SIZE + 5);
-      ctx.lineTo(x + PLAYER_SIZE / 2 + 12, y + PLAYER_SIZE + 15 + legAnim);
+      ctx.moveTo(x + playerSize / 2, y + playerSize + 5);
+      ctx.lineTo(x + playerSize / 2 + 12, y + playerSize + 15 + legAnim);
       ctx.stroke();
 
       // Head (logo)
       if (logoImgRef.current) {
-        ctx.drawImage(logoImgRef.current, x, y, PLAYER_SIZE, PLAYER_SIZE);
+        ctx.drawImage(logoImgRef.current, x, y, playerSize, playerSize);
       }
 
-      // Jump indicator
-      if (gameRef.current.player.jumpsRemaining < MAX_JUMPS) {
+      // Jump indicator (if you want to keep it)
+      if (typeof MAX_JUMPS !== "undefined" && gameRef.current.player.jumpsRemaining < MAX_JUMPS) {
         const jumps = gameRef.current.player.jumpsRemaining;
         ctx.fillStyle = "rgba(239, 68, 68, 0.8)";
         for (let i = 0; i < jumps; i++) {
           ctx.beginPath();
-          ctx.arc(x + PLAYER_SIZE / 2, y + PLAYER_SIZE + 50 + i * 8, 4, 0, Math.PI * 2);
+          ctx.arc(x + playerSize / 2, y + playerSize + 50 + i * 8, 4, 0, Math.PI * 2);
           ctx.fill();
         }
       }
     };
 
     const drawObstacles = () => {
+      const { groundY } = metrics();
+
       gameRef.current.obstacles.forEach((obs) => {
         if (obs.type === "block") {
           ctx.fillStyle = "#22c55e";
-          ctx.fillRect(obs.x, GROUND_Y - obs.height, obs.width, obs.height);
+          ctx.fillRect(obs.x, groundY - obs.height, obs.width, obs.height);
           ctx.strokeStyle = "#16a34a";
           ctx.lineWidth = 2;
-          ctx.strokeRect(obs.x, GROUND_Y - obs.height, obs.width, obs.height);
+          ctx.strokeRect(obs.x, groundY - obs.height, obs.width, obs.height);
         } else {
           ctx.fillStyle = "#dc2626";
           ctx.beginPath();
-          ctx.moveTo(obs.x, GROUND_Y);
-          ctx.lineTo(obs.x + obs.width / 2, GROUND_Y - obs.height);
-          ctx.lineTo(obs.x + obs.width, GROUND_Y);
+          ctx.moveTo(obs.x, groundY);
+          ctx.lineTo(obs.x + obs.width / 2, groundY - obs.height);
+          ctx.lineTo(obs.x + obs.width, groundY);
           ctx.closePath();
           ctx.fill();
         }
@@ -187,6 +182,9 @@ export default function QuanRunnerPage() {
       const game = gameRef.current;
       game.frame++;
 
+      // Always get latest metrics for responsive collision/physics
+      const { groundY, playerSize } = metrics();
+
       // Speed increase
       if (game.frame % 300 === 0) {
         game.speed += 0.5;
@@ -197,8 +195,8 @@ export default function QuanRunnerPage() {
         game.player.velocityY += GRAVITY;
         game.player.y += game.player.velocityY;
 
-        if (game.player.y >= GROUND_Y - PLAYER_SIZE - 35) {
-          game.player.y = GROUND_Y - PLAYER_SIZE - 35;
+        if (game.player.y >= groundY - playerSize - 35) {
+          game.player.y = groundY - playerSize - 35;
           game.player.velocityY = 0;
           game.player.isJumping = false;
           game.player.jumpsRemaining = MAX_JUMPS; // Reset jumps on landing
@@ -209,7 +207,7 @@ export default function QuanRunnerPage() {
       if (game.frame % 100 === 0) {
         const type = Math.random() > 0.5 ? "block" : "spike";
         const height = type === "spike" ? 40 : 30 + Math.random() * 40;
-        const { w, h, groundY: GROUND_Y, playerSize: PLAYER_SIZE } = metrics();
+        const { w } = metrics();
         game.obstacles.push({
           x: w, // Spawn at the right edge of the canvas
           width: type === "spike" ? 30 : 40,
@@ -220,10 +218,10 @@ export default function QuanRunnerPage() {
 
       // Coins
       if (game.frame % 80 === 0) {
-        const { w, groundY, playerSize } = metrics();
+        const { w, groundY } = metrics();
         game.coins.push({
           x: w,
-          y: GROUND_Y - 100 - Math.random() * 100, // keep y axis as is
+          y: groundY - 100 - Math.random() * 100, // keep y axis as is
           collected: false,
         });
       }
@@ -231,14 +229,14 @@ export default function QuanRunnerPage() {
       // Obstacles update
       game.obstacles = game.obstacles.filter((obs) => {
         obs.x -= game.speed;
-        const playerBottom = game.player.y + PLAYER_SIZE + 35;
-        const playerRight = game.player.x + PLAYER_SIZE;
+        const playerBottom = game.player.y + playerSize + 35;
+        const playerRight = game.player.x + playerSize;
         const playerLeft = game.player.x;
 
         if (
           playerRight > obs.x &&
           playerLeft < obs.x + obs.width &&
-          playerBottom > GROUND_Y - obs.height
+          playerBottom > groundY - obs.height
         ) {
           endGame();
         }
@@ -250,8 +248,8 @@ export default function QuanRunnerPage() {
         coin.x -= game.speed;
         if (
           !coin.collected &&
-          Math.abs(game.player.x + PLAYER_SIZE / 2 - coin.x) < 30 &&
-          Math.abs(game.player.y + PLAYER_SIZE / 2 - coin.y) < 30
+          Math.abs(game.player.x + playerSize / 2 - coin.x) < 30 &&
+          Math.abs(game.player.y + playerSize / 2 - coin.y) < 30
         ) {
           coin.collected = true;
           game.internalScore += 10;
@@ -268,6 +266,8 @@ export default function QuanRunnerPage() {
     };
 
     const render = () => {
+      const { groundY } = metrics();
+
       // Background
       const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
       gradient.addColorStop(0, "#0f172a");
@@ -277,12 +277,12 @@ export default function QuanRunnerPage() {
 
       // Ground
       ctx.fillStyle = "#1e293b";
-      ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+      ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
       ctx.strokeStyle = "#334155";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(0, GROUND_Y);
-      ctx.lineTo(canvas.width, GROUND_Y);
+      ctx.moveTo(0, groundY);
+      ctx.lineTo(canvas.width, groundY);
       ctx.stroke();
 
       if (gameState === "playing") {
@@ -303,13 +303,12 @@ export default function QuanRunnerPage() {
         );
       }
 
-      // Add this inside the render function, after drawing the background and before animationId = requestAnimationFrame(render);
-      // Only show the hint when in menu state and on small screens:
-      if (gameState === "menu" && width < 600) {
+      const { w } = metrics();
+      if (gameState === "menu" && w < 600) {
         ctx.font = "bold 16px Arial";
         ctx.fillStyle = "#fbbf24";
         ctx.textAlign = "right";
-        ctx.fillText("TAP TO JUMP", width - 20, 40);
+        ctx.fillText("TAP TO JUMP", w - 20, 40);
       }
 
       animationId = requestAnimationFrame(render);
@@ -354,11 +353,16 @@ export default function QuanRunnerPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const w = canvas.width / dpr;
-    const h = canvas.height / dpr;
-    const groundY = h - 50;
-    const playerSize = Math.max(36, Math.min(50, w / 12));
+    // Use metrics for responsive player spawn
+    const metrics = () => {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+      const groundY = h - 50;
+      const playerSize = Math.max(36, Math.min(50, w / 12));
+      return { w, h, groundY, playerSize };
+    };
+    const { groundY, playerSize } = metrics();
 
     gameRef.current = {
       player: {
