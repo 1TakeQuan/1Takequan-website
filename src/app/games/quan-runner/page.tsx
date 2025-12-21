@@ -34,7 +34,7 @@ export default function QuanRunnerPage() {
     if (saved) setHighScore(parseInt(saved));
 
     const img = new window.Image();
-    img.src = "/logo.png";
+    img.src = "/logo.PNG"; // <-- match file name case
     img.onload = () => {
       logoImgRef.current = img;
       setLogoLoaded(true);
@@ -59,7 +59,7 @@ export default function QuanRunnerPage() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !logoLoaded) return;
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -118,9 +118,14 @@ export default function QuanRunnerPage() {
       ctx.lineTo(x + playerSize / 2 + 12, y + playerSize + 15 + legAnim);
       ctx.stroke();
 
-      // Head (logo)
+      // Head (logo with fallback)
       if (logoImgRef.current) {
         ctx.drawImage(logoImgRef.current, x, y, playerSize, playerSize);
+      } else {
+        ctx.fillStyle = "#ef4444";
+        ctx.beginPath();
+        ctx.arc(x + playerSize / 2, y + playerSize / 2, playerSize / 2, 0, Math.PI * 2);
+        ctx.fill();
       }
 
       // Jump indicator (if you want to keep it)
@@ -347,7 +352,7 @@ export default function QuanRunnerPage() {
       canvas.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyPress);
     };
-  }, [gameState, endGame, logoLoaded]);
+  }, [gameState, endGame]);
 
   const startGame = () => {
     const canvas = canvasRef.current;
@@ -446,7 +451,7 @@ export default function QuanRunnerPage() {
 
           {gameState === "menu" && (
             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
-              <Image src="/logo.png" alt="1TakeQuan Logo" width={100} height={100} className="mb-4" />
+              <Image src="/logo.PNG" alt="1TakeQuan Logo" width={100} height={100} className="mb-4" />
               <h2 className="text-3xl font-bold mb-4">Quan Runner</h2>
               <p className="text-gray-400 mb-2">Click or press SPACE to jump</p>
               <p className="text-sm text-red-400 mb-6">✨ Double Jump Available!</p>
