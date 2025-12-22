@@ -23,7 +23,7 @@ export default function Navbar() {
           <Link href="/" className="flex items-center gap-3 group" aria-label="Go to homepage">
             <div className="relative w-12 h-12 shrink-0">
               <Image
-                src="/logo.PNG"
+                src="/logo.png"
                 alt="1TakeQuan logo"
                 fill
                 className="object-contain"
