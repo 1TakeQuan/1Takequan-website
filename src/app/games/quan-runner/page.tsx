@@ -398,8 +398,8 @@ export default function QuanRunnerPage() {
 
     const resize = () => {
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const cssW = Math.min(wrap.clientWidth, 480); // phone-first
-      const cssH = Math.round(cssW * 0.6); // slightly taller for jump visibility
+      const cssW = Math.min(wrap.clientWidth, 960); // allow larger display
+      const cssH = Math.round(cssW * 0.56); // ~16:9 while keeping jump room
 
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
@@ -424,7 +424,7 @@ export default function QuanRunnerPage() {
 
   return (
     <div ref={wrapRef} className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
-      <div className="max-w-2xl w-full">
+      <div className="max-w-4xl w-full">
         <Link
           href="/games"
           className="inline-flex items-center gap-2 text-red-500 hover:text-red-400 mb-6 transition"
@@ -434,6 +434,15 @@ export default function QuanRunnerPage() {
           </svg>
           Back to Games
         </Link>
+
+        <Image
+          src="/games/quan-runner/quan-runner-square.png"
+          alt="Quan Runner Cover"
+          width={220}
+          height={220}
+          className="mb-4 rounded-xl shadow-2xl"
+          priority
+        />
 
         <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">
           Quan Runner

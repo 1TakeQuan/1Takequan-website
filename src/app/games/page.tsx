@@ -19,19 +19,20 @@ type Game = {
 
 const games: Game[] = [
   {
-    id: "flappy-quan",
-    title: "Flappy Quan",
-    description: "Navigate through obstacles and beat your high score in this addictive arcade game!",
-    category: "Arcade",
-    playUrl: "/games/flappy-quan",
-    featured: true,
-  },
-  {
     id: "quan-runner",
     title: "Quan Runner",
     description: "Run through the streets of LA, dodge obstacles, and collect coins!",
     category: "Action",
     playUrl: "/games/quan-runner",
+    thumbnail: "/games/quan-runner/quan-runner-square.png",
+    featured: true,
+  },
+  {
+    id: "flappy-quan",
+    title: "Flappy Quan",
+    description: "Navigate through obstacles and beat your high score in this addictive arcade game!",
+    category: "Arcade",
+    playUrl: "/games/flappy-quan",
     featured: true,
   },
   {
