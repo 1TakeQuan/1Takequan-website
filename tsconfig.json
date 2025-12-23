@@ -1,17 +1,13 @@
 {
   "compilerOptions": {
-    "baseUrl": "src",
+    "baseUrl": ".",
     "paths": {
       "@/*": [
-        "*"
+        "src/*"
       ]
     },
     "jsx": "preserve",
     "module": "esnext",
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    },
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,

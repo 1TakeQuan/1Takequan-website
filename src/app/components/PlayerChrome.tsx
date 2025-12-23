@@ -5,6 +5,7 @@ import { pickProvider } from "@/lib/player/selectProvider";
 import { getEngine } from "@/lib/player/getEngine";
 import type { PlayerEngine } from "@/lib/player/engine";
 import { usePlayer } from "@/contexts/PlayerContext";
+import Image from "next/image";
 
 export default function PlayerChrome({ track }: { track: Track }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -90,8 +91,13 @@ export default function PlayerChrome({ track }: { track: Track }) {
     <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
       <div className="flex items-center gap-4">
         {track.cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={track.cover} alt={track.title} className="w-16 h-16 rounded object-cover" />
+          <Image
+            src={track.cover}
+            alt={track.title}
+            width={64}
+            height={64}
+            className="w-16 h-16 rounded object-cover"
+          />
         ) : (
           <div className="w-16 h-16 rounded bg-zinc-800" />
         )}

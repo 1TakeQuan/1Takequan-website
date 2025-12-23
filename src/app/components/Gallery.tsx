@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Image from "next/image";
 
 export function Home() {
   return (
@@ -45,10 +46,13 @@ export default function Gallery() {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       {images.map((img) => (
-        <img
+        <Image
           key={img}
           src={`/gallery/${img}`}
           alt={img}
+          width={600}
+          height={600}
+          sizes="(min-width: 768px) 25vw, 50vw"
           className="rounded shadow object-cover w-full h-48"
           loading="lazy"
         />
