@@ -504,7 +504,6 @@ export function GameCardSkeleton() {
         <div className="h-4 bg-zinc-700 rounded-full mb-4"></div>
         <div className="flex gap-2">
           <div className="h-10 w-full bg-zinc-700 rounded-lg"></div>
-          <div className="h-10 w-full bg-zinc-700 rounded-lg"></div>
         </div>
       </div>
     </div>
