@@ -1,48 +1,39 @@
-import { Resend } from 'resend';
 import { NextResponse } from "next/server";
+import { Resend } from "resend";
 
-export const runtime = "nodejs";
-
-function clean(s: unknown) {
-    return String(s ?? "").trim();
-}
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function POST(req: Request) {
-    const body = await req.json().catch(() => ({}));
-
-    const topic = clean(body.topic);
-    const name = clean(body.name);
-    const fromEmail = clean(body.fromEmail);
-    const message = clean(body.message);
+  try {
+    const { topic, name, fromEmail, message } = await req.json();
 
     if (!topic || !name || !fromEmail || !message) {
-        return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
+      return NextResponse.json({ error: "All fields required." }, { status: 400 });
     }
 
-    // Your private inbox destination:
-    const TO_EMAIL = "1TakeQuanBooking@gmail.com";
-
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-        return NextResponse.json(
-            { error: "Email sending is not configured yet (missing RESEND_API_KEY)." },
-            { status: 500 }
-        );
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
+      return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
     }
 
-    const resend = new Resend(apiKey);
-
-    await resend.emails.send({
-        from: "1TakeQuan Site <onboarding@resend.dev>",
-        to: [TO_EMAIL],
-        replyTo: fromEmail,
-        subject: `1TakeQuan Site — ${topic} inquiry from ${name}`,
-        text:
-            `Topic: ${topic}\n` +
-            `Name: ${name}\n` +
-            `Email: ${fromEmail}\n\n` +
-            `Message:\n${message}\n`,
+    // Send email using Resend
+    const emailResponse = await resend.emails.send({
+      from: "1TakeQuan Website <no-reply@yourdomain.com>",
+      to: "1TakeQuanBooking@gmail.com",
+      subject: `[Contact] ${topic} from ${name}`,
+      replyTo: fromEmail,
+      text: `Topic: ${topic}\nName: ${name}\nFrom: ${fromEmail}\n\n${message}`,
     });
 
+    if (emailResponse.error) {
+      return NextResponse.json({ error: emailResponse.error.message || "Failed to send." }, { status: 500 });
+    }
+
     return NextResponse.json({ ok: true });
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
+    return NextResponse.json({ error: "Failed to send." }, { status: 500 });
+  }
 }

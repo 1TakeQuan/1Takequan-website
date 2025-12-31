@@ -4,6 +4,26 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 
+import { makeRoad } from "./renderRoad";
+import {
+  createPlayer,
+  updatePlayer,
+  jump as playerJump,
+  startSlide,
+  switchLane,
+  drawPlayer,
+  type PlayerMetrics,
+} from "./player";
+import {
+  spawnObstacle,
+  spawnCoin,
+  stepDepth,
+  checkCollisions,
+  drawObstacles,
+  drawCoins,
+} from "./obstacles";
+import { drawHUD, drawLaneLabels } from "./uiOverlays";
+
 export default function QuanRunnerPage() {
   const MAX_JUMPS = 2;
   const SLIDE_MS = 650;
@@ -19,7 +39,7 @@ export default function QuanRunnerPage() {
 
   const [gameState, setGameState] = useState<"menu" | "playing" | "gameOver">("menu");
 
-  const gameStateRef = useRef<"menu" | "playing" | "gameOver">("menu");
+  const gameStateRef = useRef(gameState);
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
@@ -27,6 +47,8 @@ export default function QuanRunnerPage() {
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [logoLoaded, setLogoLoaded] = useState(false);
+  const [scoreAnim, setScoreAnim] = useState(0);
+  const [paused, setPaused] = useState(false);
 
   const gameRef = useRef({
     player: {
@@ -50,6 +72,12 @@ export default function QuanRunnerPage() {
     spawnObstacleIn: 0.9,
     spawnCoinIn: 0.7,
     distance: 0,
+    particles: [] as Array<{ x: number; y: number; vx: number; vy: number; alpha: number; color: string; life: number }>,
+    playerTrail: [] as Array<{ x: number; y: number; alpha: number }>,
+    threatLevel: 0, // 0–100
+    combo: 0,
+    nearMisses: 0,
+    projectiles: [] as Array<{ lane: number; z: number; warning: boolean; speed: number }>,
   });
 
   useEffect(() => {
@@ -83,9 +111,9 @@ export default function QuanRunnerPage() {
   // Move setLane outside useEffect so it's available in JSX and handlers
   const setLane = (dir: -1 | 1) => {
     const game = gameRef.current;
-    if (gameState !== "playing") return;
-    if (game.player.isJumping) return;
-    game.player.lane = Math.max(0, Math.min(2, game.player.lane + dir));
+    if (gameStateRef.current !== "playing") return;
+    // Allow lane switching at any time (even jumping or sliding)
+    switchLane(game.player, dir, LANE_COUNT);
   };
 
   // Move jump outside useEffect so it's available in JSX and handlers
@@ -93,7 +121,7 @@ export default function QuanRunnerPage() {
     const game = gameRef.current;
     const JUMP_POWER = -16;
 
-    if (gameState !== "playing") return;
+    if (gameStateRef.current !== "playing") return;
     if (game.player.jumpsRemaining <= 0) return;
 
     game.player.velocityY = JUMP_POWER;
@@ -105,11 +133,56 @@ export default function QuanRunnerPage() {
   // Move slide outside useEffect so it's available in JSX and handlers
   const slide = () => {
     const game = gameRef.current;
-    if (gameState !== "playing") return;
+    if (gameStateRef.current !== "playing") return;
     if (game.player.isJumping) return;
 
     game.player.isSliding = true;
     game.player.slideUntil = Date.now() + SLIDE_MS;
+  };
+
+  // Move metrics() outside useEffect so it is accessible everywhere
+  const GRAVITY = 0.8;
+  const JUMP_POWER = -16;
+
+  const metrics = (): PlayerMetrics => {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const canvas = canvasRef.current;
+    if (!canvas) return {
+      w: 0,
+      h: 0,
+      groundY: 0,
+      PLAYER_SIZE: 0,
+      PLAYER_W: 0,
+      PLAYER_H_STAND: 0,
+      PLAYER_H_SLIDE: 0,
+      MAX_JUMPS,
+      SLIDE_MS,
+      GRAVITY,
+      JUMP_POWER,
+    };
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+
+    const groundY = h - 60; // matches road near line
+
+    const PLAYER_SIZE = Math.max(36, Math.min(52, w / 11));
+    const PLAYER_W = PLAYER_SIZE;
+    const PLAYER_H_STAND = PLAYER_SIZE + 35;
+    const PLAYER_H_SLIDE = Math.round(PLAYER_H_STAND * 0.55);
+
+    return {
+      w,
+      h,
+      groundY,
+      PLAYER_SIZE,
+      PLAYER_W,
+      PLAYER_H_STAND,
+      PLAYER_H_SLIDE,
+      MAX_JUMPS,
+      SLIDE_MS,
+      GRAVITY,
+      JUMP_POWER,
+    };
   };
 
   useEffect(() => {
@@ -118,113 +191,13 @@ export default function QuanRunnerPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const GRAVITY = 0.8;
-    const JUMP_POWER = -16;
+    const road = makeRoad(LANE_COUNT);
 
     let startX = 0;
     let startY = 0;
     let startTime = 0;
 
     let animationId: number;
-
-    const metrics = () => {
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const w = canvas.width / dpr;   // CSS pixels
-      const h = canvas.height / dpr;  // CSS pixels
-      const GROUND_Y = h - 50;
-      const PLAYER_SIZE = Math.max(36, Math.min(50, w / 12));
-      const LANES = LANE_COUNT;
-      const LANE_GAP = Math.max(70, Math.min(110, h / 4.2));
-      const laneY = [GROUND_Y - LANE_GAP * 2, GROUND_Y - LANE_GAP, GROUND_Y];
-
-      // Collision box sizes (slide makes hitbox shorter)
-      const PLAYER_W = PLAYER_SIZE;
-      const PLAYER_H_STAND = PLAYER_SIZE + 35;
-      const PLAYER_H_SLIDE = Math.round(PLAYER_H_STAND * 0.55);
-
-      // expose both original and constant-style keys
-      return {
-        w,
-        h,
-        groundY: GROUND_Y,
-        playerSize: PLAYER_SIZE,
-        GROUND_Y,
-        PLAYER_SIZE,
-        LANES,
-        LANE_GAP,
-        laneY,
-        PLAYER_W,
-        PLAYER_H_STAND,
-        PLAYER_H_SLIDE,
-        SLIDE_MS,
-      };
-    };
-
-    const drawPlayer = () => {
-      const { playerSize } = metrics();
-      const player = gameRef.current.player;
-      const isSliding = player.isSliding;
-
-      const px = laneCenterX(player.lane, 0);
-      const py = metrics().h - 110; // lower on screen
-      const scale = 1.15;
-
-      const t = Date.now() * 0.01;
-      const legAnim = Math.sin(t) * 10;
-
-      const torsoLen = isSliding ? 10 : 20;
-      const legBaseY = playerSize + torsoLen;
-      const legLen = 15;
-
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.scale(scale, scale);
-
-      ctx.strokeStyle = "#ef4444";
-      ctx.lineWidth = 4;
-      ctx.lineCap = "round";
-
-      // Torso
-      ctx.beginPath();
-      ctx.moveTo(playerSize / 2, playerSize);
-      ctx.lineTo(playerSize / 2, legBaseY);
-      ctx.stroke();
-
-      // Legs
-      ctx.beginPath();
-      ctx.moveTo(playerSize / 2, legBaseY);
-      ctx.lineTo(playerSize / 2 - 8, legBaseY + legLen + legAnim);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(playerSize / 2, legBaseY);
-      ctx.lineTo(playerSize / 2 + 8, legBaseY + legLen - legAnim);
-      ctx.stroke();
-
-      // Arms
-      ctx.beginPath();
-      ctx.moveTo(playerSize / 2, playerSize + 5);
-      ctx.lineTo(playerSize / 2 - 12, playerSize + 15 - legAnim);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(playerSize / 2, playerSize + 5);
-      ctx.lineTo(playerSize / 2 + 12, playerSize + 15 + legAnim);
-      ctx.stroke();
-
-      // Head (logo)
-      const headY = isSliding ? 12 : 0;
-      if (logoImgRef.current) {
-        ctx.drawImage(logoImgRef.current, 0, headY, playerSize, playerSize);
-      } else {
-        ctx.fillStyle = "#ef4444";
-        ctx.beginPath();
-        ctx.arc(playerSize / 2, headY + playerSize / 2, playerSize / 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      ctx.restore();
-    };
 
     // ...replace the old laneToX/z helpers with:
     function roadBoundsAtZ(z: number) {
@@ -361,206 +334,6 @@ export default function QuanRunnerPage() {
       ctx.restore();
     };
 
-    // Update drawObstacles for proper geometry
-    const drawObstacles = () => {
-      gameRef.current.obstacles.forEach(obs => {
-        const x = laneCenterX(obs.lane, obs.z);
-        const y = zToY(obs.z);
-        const scale = zToScale(obs.z);
-
-        // far objects faint, near objects solid
-        const alpha = Math.min(1, Math.max(0.15, (1 - obs.z) * 1.25));
-
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.translate(x, y);
-        ctx.scale(scale, scale);
-
-        if (obs.type === "block") {
-          // Proper block geometry: 3D effect
-          ctx.fillStyle = "#22c55e";
-          ctx.strokeStyle = "#166534";
-          ctx.lineWidth = 2;
-          // Draw a simple 3D block (cube)
-          ctx.beginPath();
-          ctx.moveTo(-22, -46);
-          ctx.lineTo(22, -46);
-          ctx.lineTo(22, 0);
-          ctx.lineTo(-22, 0);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-
-          // Top face
-          ctx.fillStyle = "#4ade80";
-          ctx.beginPath();
-          ctx.moveTo(-22, -46);
-          ctx.lineTo(0, -56);
-          ctx.lineTo(22, -46);
-          ctx.lineTo(-22, -46);
-          ctx.closePath();
-          ctx.fill();
-
-          // Side face
-          ctx.fillStyle = "#16a34a";
-          ctx.beginPath();
-          ctx.moveTo(22, -46);
-          ctx.lineTo(0, -56);
-          ctx.lineTo(0, 0);
-          ctx.lineTo(22, 0);
-          ctx.closePath();
-          ctx.fill();
-        } else {
-          // Proper spike geometry: triangle with shadow
-          ctx.fillStyle = "#dc2626";
-          ctx.beginPath();
-          ctx.moveTo(-22, 0);
-          ctx.lineTo(0, -48);
-          ctx.lineTo(22, 0);
-          ctx.closePath();
-          ctx.fill();
-
-          // Shadow
-          ctx.fillStyle = "rgba(0,0,0,0.18)";
-          ctx.beginPath();
-          ctx.moveTo(-22, 0);
-          ctx.lineTo(0, 10);
-          ctx.lineTo(22, 0);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        ctx.restore();
-      });
-    };
-
-    const drawCoins = () => {
-      gameRef.current.coins.forEach(coin => {
-        if (!coin.collected) {
-          const x = laneCenterX(coin.lane, coin.z);
-          const y = zToY(coin.z) - 30 * zToScale(coin.z);
-          const scale = zToScale(coin.z);
-          ctx.save();
-          ctx.translate(x, y);
-          ctx.scale(scale, scale);
-          ctx.fillStyle = "#fbbf24";
-          ctx.beginPath();
-          ctx.arc(0, 0, 12, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "#f59e0b";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.fillStyle = "#000";
-          ctx.font = "bold 16px Arial";
-          ctx.textAlign = "center";
-          ctx.fillText("$", 0, 6);
-          ctx.restore();
-        }
-      });
-    };
-
-    const drawLaneRadar = () => {
-      const { w } = metrics();
-
-      const panelW = Math.min(240, w * 0.42);
-      const panelH = 74;
-      const x = 16;
-      const y = 34;
-
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      ctx.strokeStyle = "rgba(255,255,255,0.12)";
-      ctx.lineWidth = 1;
-
-      if ((ctx as any).roundRect) {
-        ctx.beginPath();
-        (ctx as any).roundRect(x, y, panelW, panelH, 10);
-        ctx.fill();
-        ctx.stroke();
-      } else {
-        ctx.fillRect(x, y, panelW, panelH);
-        ctx.strokeRect(x, y, panelW, panelH);
-      }
-
-      const laneW = panelW / LANE_COUNT;
-
-      for (let i = 0; i < LANE_COUNT; i++) {
-        const lx = x + i * laneW;
-
-        if (i === gameRef.current.player.lane) {
-          ctx.fillStyle = "rgba(239,68,68,0.18)";
-          ctx.fillRect(lx + 2, y + 2, laneW - 4, panelH - 4);
-        }
-
-        if (i > 0) {
-          ctx.strokeStyle = "rgba(255,255,255,0.10)";
-          ctx.beginPath();
-          ctx.moveTo(lx, y + 8);
-          ctx.lineTo(lx, y + panelH - 8);
-          ctx.stroke();
-        }
-
-        ctx.fillStyle = "rgba(255,255,255,0.75)";
-        ctx.font = "bold 12px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText(String(i + 1), lx + laneW / 2, y + 18);
-      }
-
-      const upcoming = [...gameRef.current.obstacles]
-        .filter((o) => o.z > 0 && o.z < 1)
-        .sort((a, b) => a.z - b.z);
-
-      for (const obs of upcoming.slice(0, 12)) {
-        const laneIdx = obs.lane;
-        const lx = x + laneIdx * laneW;
-        const t = 1 - obs.z;
-        const py = y + 28 + t * (panelH - 36);
-
-        if (obs.type === "block") {
-          ctx.fillStyle = "rgba(34,197,94,0.95)";
-          ctx.fillRect(lx + laneW / 2 - 6, py - 6, 12, 12);
-        } else {
-          ctx.fillStyle = "rgba(220,38,38,0.95)";
-          ctx.beginPath();
-          ctx.moveTo(lx + laneW / 2, py - 8);
-          ctx.lineTo(lx + laneW / 2 - 7, py + 6);
-          ctx.lineTo(lx + laneW / 2 + 7, py + 6);
-          ctx.closePath();
-          ctx.fill();
-        }
-      }
-
-      ctx.restore();
-    };
-
-    const drawNearLaneBracket = () => {
-      const { h } = metrics();
-      const lane = gameRef.current.player.lane;
-
-      const x = laneCenterX(lane, 0);
-      const y = h - 52;
-
-      ctx.save();
-      ctx.strokeStyle = "rgba(251,191,36,0.9)";
-      ctx.lineWidth = 4;
-      ctx.lineCap = "round";
-
-      ctx.beginPath();
-      ctx.moveTo(x - 70, y);
-      ctx.lineTo(x - 40, y);
-      ctx.lineTo(x - 40, y - 18);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(x + 70, y);
-      ctx.lineTo(x + 40, y);
-      ctx.lineTo(x + 40, y - 18);
-      ctx.stroke();
-
-      ctx.restore();
-    };
-
     // --- DEPTH SPEED SCALING ---
     // Increase obstacle z velocity as z → 0
     // Add slight lateral parallax on lane change
@@ -575,116 +348,66 @@ export default function QuanRunnerPage() {
       if (gameState !== "playing") return;
 
       const game = gameRef.current;
-      game.frame++;
+      const m = metrics();
 
-      const player = game.player;
-      const isSliding = player.isSliding;
-      const { laneY, PLAYER_SIZE, PLAYER_W, PLAYER_H_STAND, PLAYER_H_SLIDE } = metrics();
+      game.time += dt * 1000;
 
-      if (game.frame % 300 === 0) game.speed += 0.5;
-
-      game.time += dt;
-      game.distance += game.speed * dt * 60;
-
-      // Player vertical physics (keeps lanes for jump height baseline)
-      const baseY = laneY[player.lane] - PLAYER_SIZE - 35;
-      if (player.isJumping) {
-        player.velocityY += GRAVITY;
-        player.y += player.velocityY;
-        if (player.y >= baseY) {
-          player.y = baseY;
-          player.velocityY = 0;
-          player.isJumping = false;
-          player.jumpsRemaining = MAX_JUMPS;
-        }
-      } else {
-        player.y = baseY;
-      }
-
-      if (isSliding && Date.now() > player.slideUntil) {
-        player.isSliding = false;
-      }
-
-      // Spawn timers
+      // spawn timers
       game.spawnObstacleIn -= dt;
       if (game.spawnObstacleIn <= 0) {
-        spawnObstacle();
-        game.spawnObstacleIn = Math.max(0.35, 0.9 - game.time * 0.01);
+        console.log("SPAWN OBSTACLE", game.time, game.obstacles.length);
+        spawnObstacle(game.obstacles, LANE_COUNT);
+        game.spawnObstacleIn = 0.9;
       }
 
       game.spawnCoinIn -= dt;
       if (game.spawnCoinIn <= 0) {
-        spawnCoin();
-        if (game.player.isSliding && Date.now() > game.player.slideUntil) {
-          game.player.isSliding = false;
-        }
-        game.spawnCoinIn = 0.75 + Math.random() * 0.6;
+        console.log("SPAWN COIN", game.time, game.coins.length);
+        spawnCoin(game.coins, LANE_COUNT);
+        game.spawnCoinIn = 0.9;
       }
 
-      // Helper to spawn a coin
-      function spawnCoin() {
-        const lane = Math.floor(Math.random() * LANE_COUNT);
-        game.coins.push({
-          lane,
-          z: 1,
-          collected: false,
-        });
-      }
+      // movement
+      stepDepth(game.obstacles, game.coins, game.speed);
 
-      // Helper to spawn an obstacle
-      function spawnObstacle() {
-        const lane = Math.floor(Math.random() * LANE_COUNT);
-        const type = Math.random() < 0.5 ? "block" : "spike";
-        game.obstacles.push({
-          lane,
-          z: 1,
-          type,
-          width: 44,
-          height: type === "block" ? 46 : 48,
-        });
-      }
+      // player
+      updatePlayer(game.player, dt, m);
 
-      // Z-depth motion with speed scaling
-      game.obstacles.forEach(obs => {
-        // Speed increases as z approaches 0 (closer to player)
-        const baseSpeed = 0.016 + game.speed * 0.0020;
-        const scaledSpeed = baseSpeed * (1 + 1.5 * (1 - obs.z));
-        obs.z -= scaledSpeed;
-      });
-      game.coins.forEach(coin => {
-        const baseSpeed = 0.016 + game.speed * 0.0020;
-        const scaledSpeed = baseSpeed * (1 + 1.5 * (1 - coin.z));
-        coin.z -= scaledSpeed;
-      });
-      game.obstacles = game.obstacles.filter(obs => obs.z > 0);
-      game.coins = game.coins.filter(coin => coin.z > 0 && !coin.collected);
-
-      // collision checks (unchanged, but add shake on near miss)
-      game.obstacles = game.obstacles.filter((obs) => {
-        if (obs.lane === player.lane && obs.z < 0.08) {
-          endGame();
-          return false;
-        }
-        // Camera shake on near miss (within 0.12 but not hit)
-        if (obs.lane === player.lane && obs.z < 0.12 && obs.z >= 0.08) {
-          cameraShake = 16;
-        }
-        return true;
-      });
-
-      game.coins = game.coins.filter((coin) => {
-        if (!coin.collected && coin.lane === player.lane && coin.z < 0.08) {
+      // collisions
+      checkCollisions({
+        player: game.player,
+        m,
+        obstacles: game.obstacles,
+        coins: game.coins,
+        onHit: endGame,
+        onCoin: (coin) => {
           coin.collected = true;
-          game.coinScore += 10;
-          return false;
-        }
-        return !coin.collected;
+          coin.anim = 1;
+          // Particle burst!
+          const x = road.laneCenterX(coin.lane, coin.z);
+          const y = road.zToY(coin.z) - 30 * road.zToScale(coin.z);
+          for (let i = 0; i < 8; i++) {
+            const angle = (Math.PI * 2 * i) / 8;
+            game.particles.push({
+              x, y,
+              vx: Math.cos(angle) * 2,
+              vy: Math.sin(angle) * 2,
+              alpha: 1,
+              color: "#fbbf24",
+              life: 18,
+            });
+          }
+        },
       });
 
+      // score
+      game.distance += game.speed * dt * 60;
       const distanceScore = Math.floor(game.distance / 10);
       game.internalScore = distanceScore + game.coinScore;
       scoreRef.current = game.internalScore;
       if (game.frame % 15 === 0) setScore(game.internalScore);
+
+      game.frame++;
     };
 
     // --- Parallax effect on lane change ---
@@ -706,71 +429,60 @@ export default function QuanRunnerPage() {
     const render = (ts?: number) => {
       const now = ts ?? performance.now();
       let dt = 1 / 60;
+
       if (lastTimeRef.current !== null) {
-        dt = Math.min(0.05, (now - lastTimeRef.current) / 1000); // cap large gaps
+        dt = Math.min(0.05, (now - lastTimeRef.current) / 1000);
       }
       lastTimeRef.current = now;
 
-      // Camera shake and parallax
-      applyParallax();
-      if (cameraShake > 0) {
-        ctx.save();
-        ctx.translate(
-          (Math.random() - 0.5) * cameraShake + parallaxOffset,
-          (Math.random() - 0.5) * cameraShake
-        );
-        cameraShake *= shakeDecay;
-      } else {
-        ctx.save();
-        ctx.translate(parallaxOffset, 0);
-      }
+      updateGame(dt); // ✅ ONLY place logic runs
 
-      const { groundY } = metrics();
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Background
-      const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      gradient.addColorStop(0, "#0f172a");
-      gradient.addColorStop(1, "#000000");
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // --- DRAW ONLY ---
+      const m = metrics();
 
-      // Road + lanes in perspective
-      drawRoad3D();
+      road.drawRoad3D(ctx, {
+        w: m.w,
+        h: m.h,
+        laneCount: LANE_COUNT,
+        playerLane: gameRef.current.player.lane,
+        timeMs: gameRef.current.time,
+        speed: gameRef.current.speed,
+      });
 
-      if (gameState === "playing") {
-        updateGame(dt);
-        drawObstacles();
-        drawCoins();
-        drawPlayer();
-      }
+      drawObstacles({
+        ctx,
+        obstacles: gameRef.current.obstacles,
+        laneCenterX: road.laneCenterX,
+        zToY: road.zToY,
+        zToScale: road.zToScale,
+      });
 
-      // Lane radar overlay (only while playing)
-      if (gameState === "playing") {
-        drawLaneRadar();
-        drawNearLaneBracket();
-      }
+      drawCoins({
+        ctx,
+        coins: gameRef.current.coins,
+        laneCenterX: road.laneCenterX,
+        zToY: road.zToY,
+        zToScale: road.zToScale,
+      });
 
-      // Lane highlight and labels
-      const playerLane = gameRef.current.player.lane;
-      const x = laneCenterX(playerLane, 0);
-      const { h } = metrics();
-      ctx.globalAlpha = 0.18;
-      ctx.fillStyle = "#fbbf24";
-      ctx.fillRect(x - 60, h - 100, 120, 80);
-      ctx.beginPath();
-      ctx.arc(x, h - 40, 60, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      drawPlayer(ctx, {
+        m,
+        player: gameRef.current.player,
+        laneCenterX: road.laneCenterX,
+        logoImg: logoImgRef.current,
+      });
 
-      ctx.font = "bold 16px Arial";
-      ctx.fillStyle = "#e5e7eb";
-      ctx.textAlign = "center";
-      for (let i = 0; i < LANE_COUNT; i++) {
-        ctx.fillText(`Lane ${i + 1}`, laneCenterX(i, 0), h - 10);
-      }
+      drawHUD(ctx, {
+        score,
+        speed: gameRef.current.speed,
+        jumps: `Jumps: ${gameRef.current.player.jumpsRemaining}`,
+        anim: scoreAnim,
+      });
 
       ctx.restore();
-
       animationId = requestAnimationFrame(render);
     };
 
@@ -779,21 +491,16 @@ export default function QuanRunnerPage() {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.code === "ArrowUp") {
         e.preventDefault();
-        if (gameState === "menu") {
-          startGame();
-          setTimeout(() => jump(), 0); // jump on first frame
-        } else {
-          jump();
-        }
+        doJump();
       } else if (e.code === "ArrowDown") {
         e.preventDefault();
-        slide();
+        doSlide();
       } else if (e.code === "ArrowLeft") {
         e.preventDefault();
-        setLane(-1);
+        doLane(-1);
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
-        setLane(1);
+        doLane(1);
       }
     };
 
@@ -852,8 +559,8 @@ export default function QuanRunnerPage() {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
-    const groundY = h - 50;
-    const playerSize = Math.max(36, Math.min(50, w / 12));
+    const groundY = h - 60;
+    const playerSize = Math.max(36, Math.min(52, w / 11));
 
     return { dpr, w, h, groundY, playerSize };
   };
@@ -887,7 +594,21 @@ export default function QuanRunnerPage() {
       spawnObstacleIn: 0.9,
       spawnCoinIn: 0.7,
       distance: 0,
+      particles: [] as Array<{ x: number; y: number; vx: number; vy: number; alpha: number; color: string; life: number }>,
+      playerTrail: [] as Array<{ x: number; y: number; alpha: number }>,
+      threatLevel: 0, // 0–100
+      combo: 0,
+      nearMisses: 0,
+      projectiles: [] as Array<{ lane: number; z: number; warning: boolean; speed: number }>,
     };
+
+    // Force a first spawn so the system is alive
+    spawnObstacle(gameRef.current.obstacles, LANE_COUNT);
+    spawnCoin(gameRef.current.coins, LANE_COUNT);
+
+    // Make next spawns come quickly
+    gameRef.current.spawnObstacleIn = 0.25;
+    gameRef.current.spawnCoinIn = 0.35;
 
     setScore(0);
     scoreRef.current = 0;
@@ -903,9 +624,8 @@ export default function QuanRunnerPage() {
     const resize = () => {
       const dpr = Math.max(1, window.devicePixelRatio || 1);
       const cssW = Math.min(wrap.clientWidth, 960);
-
-      const maxH = Math.round(window.innerHeight * 0.72);
-      const cssH = Math.min(Math.round(cssW * 0.78), maxH);
+      const maxH = Math.floor(window.innerHeight * 0.72);
+      const cssH = Math.min(Math.round(cssW * 0.72), maxH); // taller than 16:9
 
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
@@ -927,6 +647,66 @@ export default function QuanRunnerPage() {
       window.removeEventListener("orientationchange", resize);
     };
   }, []);
+  // Accessibility: focus canvas on game start for keyboard controls
+  useEffect(() => {
+    if (gameState === "playing" && canvasRef.current) {
+      canvasRef.current.focus?.();
+    }
+  }, [gameState]);
+
+  // Place inside your big useEffect, same scope as metrics()
+  function playerScreenTopBottom() {
+    const m = metrics();
+    const p = gameRef.current.player;
+
+    // Compute laneY array based on canvas height and lane count
+    const laneCount = 3; // or use LANE_COUNT if accessible here
+    const laneY = Array.from({ length: laneCount }, (_, i) =>
+      m.h - 60 - (m.PLAYER_SIZE + 35) - ((laneCount - 1 - i) * ((m.h - 120 - (m.h - 60 - (m.PLAYER_SIZE + 35))) / (laneCount - 1)))
+    );
+
+    // baseY matches drawPlayer for ALL lanes
+    const baseY = laneY[p.lane] ?? (m.h - 60 - m.PLAYER_SIZE - 35);
+    const jumpOffset = baseY - p.y;
+    const py = m.h - 110 - jumpOffset;
+
+    const PLAYER_DRAW_SCALE = 1.15;
+    const headY = p.isSliding ? 12 : 0;
+
+    const playerTop = py + headY * PLAYER_DRAW_SCALE;
+    const playerH = (p.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND) * PLAYER_DRAW_SCALE;
+
+    return {
+      top: playerTop,
+      bottom: playerTop + playerH,
+    };
+  }
+
+  // ...place these input handlers in your component (replace your old setLane, slide, and jump handlers):
+
+  const doLane = (dir: -1 | 1) => {
+    if (gameState !== "playing") return;
+    switchLane(gameRef.current.player, dir, LANE_COUNT);
+  };
+
+  const doSlide = () => {
+    if (gameState !== "playing") return;
+    startSlide(gameRef.current.player, metrics());
+  };
+
+  const doJump = () => {
+    if (gameState !== "playing") return;
+    playerJump(gameRef.current.player, metrics());
+  };
+  // ...use doLane, doSlide, and doJump in your event handlers...
+
+  useEffect(() => {
+    if (score > 0) {
+      setScoreAnim(1); // trigger animation
+      const timeout = setTimeout(() => setScoreAnim(0), 200); // reset after 200ms
+      return () => clearTimeout(timeout);
+    }
+  }, [score]);
 
   return (
     <div ref={wrapRef} className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
@@ -960,12 +740,12 @@ export default function QuanRunnerPage() {
             ref={canvasRef}
             width={600}
             height={400}
-            className="w-full touch-none select-none"
+            className="w-full touch-none select-none rounded-xl" // <-- add rounded-xl here
             onContextMenu={(e) => e.preventDefault()}
           />
 
           {gameState === "menu" && (
-            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
+            <div className="fade-in absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
               <Image src="/logo.PNG" alt="1TakeQuan Logo" width={100} height={100} className="mb-4" />
               <h2 className="text-3xl font-bold mb-4">Quan Runner</h2>
               <p className="text-gray-400 mb-2">Click or press SPACE to jump</p>
@@ -981,7 +761,7 @@ export default function QuanRunnerPage() {
           )}
 
           {gameState === "gameOver" && (
-            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
+            <div className="fade-in absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
               <div className="text-6xl mb-4">💥</div>
               <h2 className="text-3xl font-bold mb-2">Game Over!</h2>
               <p className="text-2xl text-red-500 mb-1">Score: {score}</p>
@@ -1004,43 +784,56 @@ export default function QuanRunnerPage() {
           )
           }
 
+          {paused && (
+            <div className="fade-in absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-40">
+              <h2 className="text-3xl font-bold mb-4">Paused</h2>
+              <button
+                className="px-8 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold text-lg transition"
+                onClick={() => setPaused(false)}
+              >
+                Resume
+              </button>
+            </div>
+          )}
+
           <div className="absolute left-0 right-0 bottom-0 flex justify-center gap-4 pb-4 pointer-events-none z-20">
             <button
               aria-label="Lane Left"
-              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full px-4 py-2 text-xl font-bold shadow"
+              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 text-white rounded-full px-4 py-2 text-xl font-bold shadow transition-transform"
               onClick={() => setLane(-1)}
             >
               ◀️
             </button>
             <button
               aria-label="Jump"
-              className="pointer-events-auto bg-red-600 hover:bg-red-700 text-white rounded-full px-6 py-2 text-xl font-bold shadow"
-              onClick={() => {
-                if (gameState === "menu") {
-                  startGame();
-                  setTimeout(() => jump(), 0);
-                } else {
-                  jump();
-                }
-              }}
+              className="pointer-events-auto bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-full px-6 py-2 text-xl font-bold shadow transition-transform"
+              onClick={() => jump()}
             >
               ⬆️
             </button>
             <button
               aria-label="Slide"
-              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full px-4 py-2 text-xl font-bold shadow"
+              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 text-white rounded-full px-4 py-2 text-xl font-bold shadow transition-transform"
               onClick={() => slide()}
             >
               ⬇️
             </button>
             <button
               aria-label="Lane Right"
-              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full px-4 py-2 text-xl font-bold shadow"
+              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 text-white rounded-full px-4 py-2 text-xl font-bold shadow transition-transform"
               onClick={() => setLane(1)}
             >
               ▶️
             </button>
           </div>
+
+          <button
+            className="absolute top-3 right-3 z-30 bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full px-4 py-2 font-bold shadow transition"
+            onClick={() => setPaused((p) => !p)}
+            style={{ pointerEvents: "auto" }}
+          >
+            {paused ? "Resume" : "Pause"}
+          </button>
         </div>
 
         <div className="mt-6 bg-zinc-900 rounded-xl p-4 border border-zinc-800">
@@ -1059,4 +852,18 @@ export default function QuanRunnerPage() {
       </div>
     </div>
   );
+}
+
+function spawnProjectile(
+  game: {
+    projectiles: Array<{ lane: number; z: number; warning: boolean; speed: number }>;
+  },
+  laneCount: number
+) {
+  const lane = Math.floor(Math.random() * laneCount);
+  game.projectiles.push({ lane, z: 1, warning: true, speed: 0.045 + Math.random() * 0.02 });
+  setTimeout(() => {
+    const p = game.projectiles.find(p => p.lane === lane && p.warning);
+    if (p) p.warning = false;
+  }, 500); // warning lasts 0.5s
 }

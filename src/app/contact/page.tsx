@@ -61,7 +61,7 @@ export default function ContactPage() {
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <select
-          className="w-full p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          className="bg-zinc-900 text-white caret-white border border-zinc-700 rounded px-3 py-2"
           value={topic}
           onChange={(e) => setTopic(e.target.value as Topic)}
         >
@@ -73,21 +73,21 @@ export default function ContactPage() {
         </select>
 
         <input
-          className="w-full p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          className="bg-zinc-900 text-white caret-white border border-zinc-700 rounded px-3 py-2"
           placeholder="Your name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
         <input
-          className="w-full p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          className="bg-zinc-900 text-white caret-white border border-zinc-700 rounded px-3 py-2"
           placeholder="Your email or IG"
           value={fromEmail}
           onChange={(e) => setFromEmail(e.target.value)}
           required
         />
         <textarea
-          className="w-full min-h-[160px] p-4 rounded-xl bg-zinc-950 border border-zinc-800"
+          className="w-full min-h-[160px] p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-white caret-white"
           placeholder="What you trying to do?"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
