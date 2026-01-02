@@ -2,12 +2,14 @@
 import { Resend } from "resend";
 import { NextResponse } from "next/server";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 export async function POST(req: Request) {
-  if (!process.env.RESEND_API_KEY) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
     return NextResponse.json({ error: "Missing RESEND_API_KEY" }, { status: 500 });
   }
+
+  const resend = new Resend(apiKey);
+
   try {
     const { topic, name, fromEmail, message } = await req.json();
 
@@ -15,22 +17,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "All fields required." }, { status: 400 });
     }
 
-    // Validate email format
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
       return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
     }
 
-    // Send email using Resend
     const emailResponse = await resend.emails.send({
-      from: "1TakeQuan Website <no-reply@yourdomain.com>",
-      to: "1TakeQuanBooking@gmail.com",
+      from: "1TakeQuan Website <no-reply@send.1takequan.net>", // use your verified domain
+      to: ["1TakeQuanBooking@gmail.com"],
       subject: `[Contact] ${topic} from ${name}`,
       replyTo: fromEmail,
       text: `Topic: ${topic}\nName: ${name}\nFrom: ${fromEmail}\n\n${message}`,
     });
 
     if (emailResponse.error) {
-      return NextResponse.json({ error: emailResponse.error.message || "Failed to send." }, { status: 500 });
+      return NextResponse.json(
+        { error: emailResponse.error.message || "Failed to send." },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ ok: true });
