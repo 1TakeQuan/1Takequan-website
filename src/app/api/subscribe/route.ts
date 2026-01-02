@@ -1,14 +1,29 @@
 // src/app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
-import fetch from "node-fetch";
 
 const MAILERLITE_API_TOKEN = process.env.MAILERLITE_API_TOKEN;
-const MAILERLITE_GROUP_ID = process.env.MAILERLITE_GROUP_ID_WEBSITE_SIGNUPS; // or whichever group you want
+const MAILERLITE_GROUP_ID =
+  process.env.MAILERLITE_GROUP_ID_WEBSITE_SIGNUPS; // change per form if needed
 
 export async function POST(req: Request) {
   try {
+    // Fail fast if env is missing
+    if (!MAILERLITE_API_TOKEN) {
+      return NextResponse.json(
+        { error: "MailerLite API token missing (MAILERLITE_API_TOKEN)." },
+        { status: 500 }
+      );
+    }
+    if (!MAILERLITE_GROUP_ID) {
+      return NextResponse.json(
+        { error: "MailerLite group id missing (MAILERLITE_GROUP_ID_WEBSITE_SIGNUPS)." },
+        { status: 500 }
+      );
+    }
+
     const body = await req.json();
-    const { email, zipcode } = body;
+    const email = String(body?.email ?? "").trim();
+    const zipcode = String(body?.zipcode ?? "").trim();
 
     // Validation
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -25,25 +40,36 @@ export async function POST(req: Request) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-MailerLite-ApiKey": MAILERLITE_API_TOKEN!,
+          "X-MailerLite-ApiKey": MAILERLITE_API_TOKEN,
         },
         body: JSON.stringify({
           email,
-          fields: { zipcode }
+          fields: { zipcode },
         }),
       }
     );
 
     if (!res.ok) {
-      const error = await res.json();
-      const errorMessage =
-        typeof error === "object" && error !== null && "error" in error && typeof (error as any).error?.message === "string"
-          ? (error as any).error.message
-          : "MailerLite error";
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 500 }
-      );
+      // MailerLite might return JSON or text
+      const contentType = res.headers.get("content-type") || "";
+      let details: any = null;
+
+      if (contentType.includes("application/json")) {
+        details = await res.json().catch(() => null);
+      } else {
+        details = await res.text().catch(() => null);
+      }
+
+      const message =
+        (details &&
+          typeof details === "object" &&
+          details?.error?.message &&
+          typeof details.error.message === "string" &&
+          details.error.message) ||
+        (typeof details === "string" && details) ||
+        `MailerLite error (${res.status})`;
+
+      return NextResponse.json({ error: message }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });
