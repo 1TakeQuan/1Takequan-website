@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     }
 
     const emailResponse = await resend.emails.send({
-      from: "1TakeQuan Website <no-reply@send.1takequan.net>", // use your verified domain
+      from: "1TakeQuan Website <onboarding@resend.dev>", // Resend default sender for free plan
       to: ["1TakeQuanBooking@gmail.com"],
       subject: `[Contact] ${topic} from ${name}`,
       replyTo: fromEmail,
