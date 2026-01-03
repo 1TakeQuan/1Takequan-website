@@ -20,6 +20,14 @@ declare global {
     }
 }
 
+const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+if (!siteKey && typeof window !== "undefined") {
+    // Only warn in browser
+    // eslint-disable-next-line no-console
+    console.warn("Missing NEXT_PUBLIC_TURNSTILE_SITE_KEY");
+}
+
 export default function TurnstileWidget({
     onToken,
 }: {
@@ -29,11 +37,7 @@ export default function TurnstileWidget({
     const widgetIdRef = useRef<string | null>(null);
 
     useEffect(() => {
-        const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-        if (!siteKey) {
-            console.warn("Missing NEXT_PUBLIC_TURNSTILE_SITE_KEY");
-            return;
-        }
+        if (!siteKey) return;
 
         // Load script once
         const existing = document.querySelector(
@@ -42,10 +46,7 @@ export default function TurnstileWidget({
 
         const load = () => {
             if (!ref.current || !window.turnstile) return;
-
-            // Prevent double render
             if (widgetIdRef.current) return;
-
             widgetIdRef.current = window.turnstile.render(ref.current, {
                 sitekey: siteKey,
                 theme: "dark",
@@ -70,7 +71,6 @@ export default function TurnstileWidget({
         document.body.appendChild(script);
 
         return () => {
-            // optional: reset on unmount
             if (window.turnstile && widgetIdRef.current) {
                 try {
                     window.turnstile.reset(widgetIdRef.current);
@@ -80,5 +80,6 @@ export default function TurnstileWidget({
         };
     }, [onToken]);
 
+    if (!siteKey) return null;
     return <div ref={ref} />;
 }
