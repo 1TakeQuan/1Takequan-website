@@ -5,6 +5,24 @@ const MAILERLITE_API_TOKEN = process.env.MAILERLITE_API_TOKEN;
 const MAILERLITE_GROUP_ID =
   process.env.MAILERLITE_GROUP_ID_WEBSITE_SIGNUPS; // change per form if needed
 
+async function verifyTurnstile(token: string, ip?: string) {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  if (!secret) throw new Error("Missing TURNSTILE_SECRET_KEY");
+
+  const form = new FormData();
+  form.append("secret", secret);
+  form.append("response", token);
+  if (ip) form.append("remoteip", ip);
+
+  const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    body: form,
+  });
+
+  const data = (await r.json()) as { success: boolean; "error-codes"?: string[] };
+  return data;
+}
+
 export async function POST(req: Request) {
   try {
     // Fail fast if env is missing
@@ -24,6 +42,20 @@ export async function POST(req: Request) {
     const body = await req.json();
     const email = String(body?.email ?? "").trim();
     const zipcode = String(body?.zipcode ?? "").trim();
+    const turnstileToken = String(body?.turnstileToken ?? "").trim();
+
+    // Verify Turnstile token
+    if (!turnstileToken) {
+      return NextResponse.json({ error: "Missing anti-bot token." }, { status: 400 });
+    }
+    const ip =
+      req.headers.get("cf-connecting-ip") ||
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      undefined;
+    const verify = await verifyTurnstile(turnstileToken, ip);
+    if (!verify.success) {
+      return NextResponse.json({ error: "Anti-bot verification failed." }, { status: 403 });
+    }
 
     // Validation
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

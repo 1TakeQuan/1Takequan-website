@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import TurnstileWidget from "@/components/TurnstileWidget";
 
 const TOPICS = [
   "Bookings",
@@ -25,17 +26,24 @@ export default function ContactPage() {
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setStatus("sending");
     setErrorMsg("");
 
+    if (!turnstileToken) {
+      setStatus("error");
+      setErrorMsg("Please verify you’re human.");
+      return;
+    }
+
+    setStatus("sending");
     try {
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, name, fromEmail, message }),
+        body: JSON.stringify({ topic, name, fromEmail, message, turnstileToken }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -93,6 +101,8 @@ export default function ContactPage() {
           onChange={(e) => setMessage(e.target.value)}
           required
         />
+
+        <TurnstileWidget onToken={setTurnstileToken} />
 
         <button
           type="submit"
