@@ -6,7 +6,7 @@
         "src/*"
       ]
     },
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -14,7 +14,6 @@
     "noEmit": true,
     "target": "esnext",
     "lib": [
-
       "dom",
       "dom.iterable",
       "esnext"
@@ -35,7 +34,8 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    "src/app/api/events/route.ts"
+    "src/app/api/events/route.ts",
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -6,7 +6,6 @@ import Image from "next/image";
 
 import { makeRoad } from "./renderRoad";
 import {
-  createPlayer,
   updatePlayer,
   jump as playerJump,
   startSlide,
@@ -14,157 +13,284 @@ import {
   drawPlayer,
   type PlayerMetrics,
 } from "./player";
-import {
-  spawnObstacle,
-  spawnCoin,
-  stepDepth,
-  checkCollisions,
-  drawObstacles,
-  drawCoins,
-} from "./obstacles";
-import { drawHUD, drawLaneLabels } from "./uiOverlays";
+import { spawnCoin, stepDepth, checkCollisions, drawObstacles, drawCoins } from "./obstacles";
+import { drawHUD, drawPopups } from "./uiOverlays";
+import { loadImage } from "./loadImage";
+import { drawParallax as importedDrawParallax } from "./parallax";
+
+type Tier = 1 | 2 | 3 | 4;
+
+type Popup = {
+  x: number;
+  y: number;
+  text: string;
+  color?: string;
+  ttl: number;
+  vy: number;
+  alpha: number;
+  scale: number;
+};
+
+type GameState = {
+  player: {
+    x: number;
+    y: number;
+    velocityY: number;
+    isJumping: boolean;
+    jumpsRemaining: number;
+    lane: number;
+    isSliding: boolean;
+    slideUntil: number;
+  };
+  obstacles: Array<{
+    lane: number;
+    z: number;
+    type: "block" | "spike";
+    width: number;
+    height: number;
+    _nearMissChecked?: boolean;
+  }>;
+  coins: Array<{ lane: number; z: number; collected: boolean; anim?: number }>;
+  frame: number;
+  speed: number;
+  time: number;
+  distance: number;
+
+  // scoring buckets
+  internalScore: number;
+  coinScore: number;
+  bonusScore: number;
+  nearMisses: number;
+
+  // gameplay
+  combo: number;
+  comboUntil?: number;
+  lives: number;
+  maxLives: number;
+  invincibleUntil?: number;
+  hitFlash?: number;
+
+  // visuals
+  popups: Popup[];
+  comboGlow: number;
+  lifeMilestone: number; // how many 5k milestones reached
+};
+
+const COIN_VALUE = 10;
+const NEAR_MISS_VALUE = 15;
+const HIT_PENALTY = 0;
+
+const COMBO_WINDOW_MS = 2200;
+function comboBonus(combo: number) {
+  return combo > 1 ? 2 * (combo - 1) : 0;
+}
+
+const MAX_JUMPS = 2;
+const SLIDE_MS = 650;
+const LANE_COUNT = 3;
+
+const GRAVITY = 0.8;
+const JUMP_POWER = -16;
+
+// Speed scaling (smooth)
+const BASE_SPEED = 1.0;
+const MAX_SPEED = 3.2;
+function difficultyFactor(score: number) {
+  return Math.min(1, score / 2200);
+}
+function scaledSpeed(score: number) {
+  const f = difficultyFactor(score);
+  return BASE_SPEED + (MAX_SPEED - BASE_SPEED) * f;
+}
+
+function getTier(score: number): Tier {
+  if (score < 400) return 1;
+  if (score < 900) return 2;
+  if (score < 1600) return 3;
+  return 4;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function difficulty(distance: number) {
+  const obstacleMs = clamp(950 - distance / 6, 260, 950);
+  const coinMs = clamp(800 - distance / 10, 280, 800);
+  return { obstacleMs, coinMs };
+}
+
+// ✅ score computed in ONE place (leaderboard-ready)
+function computeScore(game: GameState) {
+  return Math.floor(game.distance) + game.coinScore + game.bonusScore - HIT_PENALTY * 0;
+}
+
+// ✅ popups updated in ONE place
+function updatePopups(popups: Popup[]) {
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const p = popups[i];
+    p.y += p.vy;
+    p.vy *= 0.98;
+    p.scale = Math.max(1, p.scale * 0.985);
+    p.ttl -= 1;
+    if (p.ttl < 12) p.alpha = Math.max(0, p.ttl / 12);
+    if (p.ttl <= 0) popups.splice(i, 1);
+  }
+}
+
+// pick lanes but guarantee at least 1 open lane
+function spawnObstaclePack(game: GameState, laneCount: number, tier: Tier) {
+  const lanes = [...Array(laneCount)].map((_, i) => i);
+  const randLane = () => lanes[Math.floor(Math.random() * lanes.length)];
+  const randType = () => (Math.random() < 0.55 ? "block" : "spike");
+
+  const packSize =
+    tier === 1
+      ? 1
+      : tier === 2
+      ? 1 + (Math.random() < 0.25 ? 1 : 0)
+      : tier === 3
+      ? Math.random() < 0.65
+        ? 2
+        : 1
+      : Math.random() < 0.75
+      ? 2
+      : 1;
+
+  const maxObstaclesThisWave = Math.min(packSize, laneCount - 1);
+
+  const chosen = new Set<number>();
+  while (chosen.size < maxObstaclesThisWave) chosen.add(randLane());
+
+  for (const lane of chosen) {
+    const type = randType();
+    game.obstacles.push({
+      lane,
+      z: 1,
+      type,
+      width: 44,
+      height: type === "block" ? 46 : 48,
+    });
+  }
+
+  const openLanes = lanes.filter((l) => !chosen.has(l));
+  if (openLanes.length) {
+    const coinLane = openLanes[Math.floor(Math.random() * openLanes.length)];
+    game.coins.push({ lane: coinLane, z: 1, collected: false, anim: 0 });
+    if (tier >= 2 && Math.random() < 0.35) {
+      game.coins.push({ lane: coinLane, z: 1.06, collected: false, anim: 0 });
+    }
+  }
+}
 
 export default function QuanRunnerPage() {
-  const MAX_JUMPS = 2;
-  const SLIDE_MS = 650;
-  const LANE_COUNT = 3;
-
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
-  // Add these lines below your other refs:
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const scoreRef = useRef(0);
-  const lastTimeRef = useRef<number | null>(null);
+  // Parallax background image refs
+  const bgFarRef = useRef<HTMLImageElement | null>(null);
+  const bgMidRef = useRef<HTMLImageElement | null>(null);
+  const bgNearRef = useRef<HTMLImageElement | null>(null);
 
   const [gameState, setGameState] = useState<"menu" | "playing" | "gameOver">("menu");
-
   const gameStateRef = useRef(gameState);
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
 
   const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState(0);
-  const [logoLoaded, setLogoLoaded] = useState(false);
-  const [scoreAnim, setScoreAnim] = useState(0);
-  const [paused, setPaused] = useState(false);
+  const scoreRef = useRef(0);
 
-  const gameRef = useRef({
+  const [highScore, setHighScore] = useState(0);
+  const highScoreRef = useRef(0);
+  useEffect(() => {
+    highScoreRef.current = highScore;
+  }, [highScore]);
+
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  const lastTickRef = useRef<number>(0);
+  const obstacleCooldownRef = useRef<number>(900);
+  const coinCooldownRef = useRef<number>(650);
+
+  const gameRef = useRef<GameState>({
     player: {
       x: 100,
       y: 265,
       velocityY: 0,
       isJumping: false,
-      jumpsRemaining: 2,
-      lane: 1, // 0=top, 1=mid, 2=bottom
+      jumpsRemaining: MAX_JUMPS,
+      lane: 1,
       isSliding: false,
       slideUntil: 0,
     },
-    obstacles: [] as Array<{ lane: number; z: number; type: "block" | "spike"; width: number; height: number }>,
-    coins: [] as Array<{ lane: number; z: number; collected: boolean }>,
+    obstacles: [],
+    coins: [],
     frame: 0,
-    speed: 5,
-    animationFrame: 0,
+    speed: BASE_SPEED,
+    time: 0,
+    distance: 0,
     internalScore: 0,
     coinScore: 0,
-    time: 0,
-    spawnObstacleIn: 0.9,
-    spawnCoinIn: 0.7,
-    distance: 0,
-    particles: [] as Array<{ x: number; y: number; vx: number; vy: number; alpha: number; color: string; life: number }>,
-    playerTrail: [] as Array<{ x: number; y: number; alpha: number }>,
-    threatLevel: 0, // 0–100
-    combo: 0,
+    bonusScore: 0,
     nearMisses: 0,
-    projectiles: [] as Array<{ lane: number; z: number; warning: boolean; speed: number }>,
+    combo: 0,
+    comboUntil: 0,
+    lives: 1,
+    maxLives: 5,
+    invincibleUntil: 0,
+    hitFlash: 0,
+    popups: [],
+    comboGlow: 0,
+    lifeMilestone: 0, // how many 5k milestones reached
   });
 
-  useEffect(() => {
-    const saved = localStorage.getItem("quan-runner-high-score");
-    if (saved) setHighScore(parseInt(saved));
+  // popup helper (safe)
+  const pushPopup = useCallback(
+    (text: string, x: number, y: number, color = "rgba(255,255,255,0.95)") => {
+      const game = gameRef.current;
+      game.popups.push({
+        x,
+        y,
+        text,
+        color,
+        ttl: 34,
+        vy: -0.9,
+        alpha: 1,
+        scale: 1.15,
+      });
+    },
+    []
+  );
 
-    const img = new window.Image();
-    img.src = "/logo.PNG"; // <-- match file name case
-    img.onload = () => {
-      logoImgRef.current = img;
-      setLogoLoaded(true);
-    };
-  }, []);
-
-  const endGame = useCallback(() => {
-    setGameState((prevState) => {
-      if (prevState === "playing") {
-        setScore((currentScore) => {
-          if (currentScore > highScore) {
-            setHighScore(currentScore);
-            localStorage.setItem("quan-runner-high-score", currentScore.toString());
-          }
-          return currentScore;
-        });
-        return "gameOver";
-      }
-      return prevState;
-    });
-  }, [highScore]);
-
-  // Move setLane outside useEffect so it's available in JSX and handlers
-  const setLane = (dir: -1 | 1) => {
-    const game = gameRef.current;
-    if (gameStateRef.current !== "playing") return;
-    // Allow lane switching at any time (even jumping or sliding)
-    switchLane(game.player, dir, LANE_COUNT);
-  };
-
-  // Move jump outside useEffect so it's available in JSX and handlers
-  const jump = () => {
-    const game = gameRef.current;
-    const JUMP_POWER = -16;
-
-    if (gameStateRef.current !== "playing") return;
-    if (game.player.jumpsRemaining <= 0) return;
-
-    game.player.velocityY = JUMP_POWER;
-    game.player.isJumping = true;
-    game.player.isSliding = false; // important: cancel slide when jumping
-    game.player.jumpsRemaining--;
-  };
-
-  // Move slide outside useEffect so it's available in JSX and handlers
-  const slide = () => {
-    const game = gameRef.current;
-    if (gameStateRef.current !== "playing") return;
-    if (game.player.isJumping) return;
-
-    game.player.isSliding = true;
-    game.player.slideUntil = Date.now() + SLIDE_MS;
-  };
-
-  // Move metrics() outside useEffect so it is accessible everywhere
-  const GRAVITY = 0.8;
-  const JUMP_POWER = -16;
-
-  const metrics = (): PlayerMetrics => {
+  const metrics = useCallback((): PlayerMetrics => {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const canvas = canvasRef.current;
-    if (!canvas) return {
-      w: 0,
-      h: 0,
-      groundY: 0,
-      PLAYER_SIZE: 0,
-      PLAYER_W: 0,
-      PLAYER_H_STAND: 0,
-      PLAYER_H_SLIDE: 0,
-      MAX_JUMPS,
-      SLIDE_MS,
-      GRAVITY,
-      JUMP_POWER,
-    };
+    if (!canvas) {
+      return {
+        w: 0,
+        h: 0,
+        groundY: 0,
+        PLAYER_SIZE: 0,
+        PLAYER_W: 0,
+        PLAYER_H_STAND: 0,
+        PLAYER_H_SLIDE: 0,
+        MAX_JUMPS,
+        SLIDE_MS,
+        GRAVITY,
+        JUMP_POWER,
+      };
+    }
+
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
 
-    const groundY = h - 60; // matches road near line
-
+    const groundY = h - 60;
     const PLAYER_SIZE = Math.max(36, Math.min(52, w / 11));
     const PLAYER_W = PLAYER_SIZE;
     const PLAYER_H_STAND = PLAYER_SIZE + 35;
@@ -183,8 +309,160 @@ export default function QuanRunnerPage() {
       GRAVITY,
       JUMP_POWER,
     };
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("quan-runner-high-score");
+    if (saved) {
+      const hs = parseInt(saved, 10);
+      setHighScore(hs);
+      highScoreRef.current = hs;
+    }
+
+    // logo
+    const logo = loadImage("/logo.PNG");
+    if (logo) logoImgRef.current = logo;
+
+    // warm parallax
+    bgFarRef.current = loadImage("/games/quan-runner/bg-far.png") || bgFarRef.current;
+    bgMidRef.current = loadImage("/games/quan-runner/bg-mid.png") || bgMidRef.current;
+    bgNearRef.current = loadImage("/games/quan-runner/bg-near.png") || bgNearRef.current;
+}, []);
+
+  const endGame = useCallback(() => {
+    const finalScore = scoreRef.current;
+    setScore(finalScore);
+
+    if (finalScore > highScoreRef.current) {
+      highScoreRef.current = finalScore;
+      setHighScore(finalScore);
+      localStorage.setItem("quan-runner-high-score", String(finalScore));
+    }
+
+    setGameState("gameOver");
+  }, []);
+
+  const doLane = (dir: -1 | 1) => {
+    if (gameStateRef.current !== "playing" || pausedRef.current) return;
+    switchLane(gameRef.current.player, dir, LANE_COUNT);
   };
 
+  const doSlide = () => {
+    if (gameStateRef.current !== "playing" || pausedRef.current) return;
+    startSlide(gameRef.current.player, metrics());
+  };
+
+  const doJump = () => {
+    if (gameStateRef.current !== "playing" || pausedRef.current) return;
+    playerJump(gameRef.current.player, metrics());
+  };
+
+  const startGame = useCallback(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const rect = wrap.getBoundingClientRect();
+    canvas.width = Math.floor(rect.width * dpr);
+    canvas.height = Math.floor(rect.height * dpr);
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const m = metrics();
+
+    gameRef.current = {
+      ...gameRef.current,
+      player: {
+        x: 100,
+        y: m.groundY - m.PLAYER_H_STAND,
+        velocityY: 0,
+        isJumping: false,
+        jumpsRemaining: MAX_JUMPS,
+        lane: 1,
+        isSliding: false,
+        slideUntil: 0,
+      },
+      obstacles: [],
+      coins: [],
+      frame: 0,
+      speed: BASE_SPEED,
+      time: 0,
+      distance: 0,
+      internalScore: 0,
+      coinScore: 0,
+      bonusScore: 0,
+      nearMisses: 0,
+      combo: 0,
+      comboUntil: 0,
+      lives: 1,
+      invincibleUntil: 0,
+      hitFlash: 0,
+      popups: [],
+      comboGlow: 0,
+      lifeMilestone: 0, // how many 5k milestones reached
+    };
+
+    lastTickRef.current = performance.now();
+    obstacleCooldownRef.current = 250;
+    coinCooldownRef.current = 220;
+
+    spawnObstaclePack(gameRef.current, LANE_COUNT, 1);
+
+    scoreRef.current = 0;
+    setScore(0);
+    setPaused(false);
+    setGameState("playing");
+  }, [metrics]);
+
+  // resize
+  useEffect(() => {
+    const resize = () => {
+      const canvas = canvasRef.current;
+      const wrap = wrapRef.current;
+      if (!canvas || !wrap) return;
+
+      // Maintain a 3:2 aspect ratio (change to 16/9 for widescreen)
+      const aspect = 3 / 2;
+      let width = wrap.clientWidth;
+      let height = Math.round(width / aspect);
+
+      // If height is too big for the viewport, shrink width/height
+      const maxHeight = Math.round(window.innerHeight * 0.7);
+      if (height > maxHeight) {
+        height = maxHeight;
+        width = Math.round(height * aspect);
+      }
+
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+
+      // match CSS size to keep the picture undistorted
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+
+    resize();
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
+
+    window.addEventListener("orientationchange", resize);
+    window.addEventListener("resize", resize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("orientationchange", resize);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  // main loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -192,186 +470,74 @@ export default function QuanRunnerPage() {
     if (!ctx) return;
 
     const road = makeRoad(LANE_COUNT);
+    let animationId = 0;
 
-    let startX = 0;
-    let startY = 0;
-    let startTime = 0;
+    const updateGame = () => {
+      if (gameStateRef.current !== "playing") return;
+      if (pausedRef.current) return;
 
-    let animationId: number;
-
-    // ...replace the old laneToX/z helpers with:
-    function roadBoundsAtZ(z: number) {
-      const { w, h } = metrics();
-
-      // more “driver view”
-      const bottomY = h - 40; // bring near road down
-      const topY = 120;       // lower horizon (was 90)
-
-      const bottomLeft = w * 0.06;
-      const bottomRight = w * 0.94;
-
-      const topLeft = w * 0.34;
-      const topRight = w * 0.66;
-
-      const left = topLeft + (bottomLeft - topLeft) * (1 - z);
-      const right = topRight + (bottomRight - topRight) * (1 - z);
-      const y = topY + (bottomY - topY) * (1 - z);
-
-      return { left, right, y, bottomY, topY };
-    }
-    function laneCenterX(lane: number, z: number) {
-      const { left, right } = roadBoundsAtZ(z);
-      const laneW = (right - left) / LANE_COUNT;
-      return left + laneW * (lane + 0.5);
-    }
-    function laneEdgeX(edgeIndex: number, z: number) {
-      const { left, right } = roadBoundsAtZ(z);
-      const laneW = (right - left) / LANE_COUNT;
-      return left + laneW * edgeIndex;
-    }
-    function zToY(z: number) {
-      return roadBoundsAtZ(z).y;
-    }
-    function zToScale(z: number) {
-      // far: ~0.35, near: ~2.0
-      return 0.35 + (1 - z) * 1.9;
-    }
-
-    const drawRoad3D = () => {
-      const { w, h } = metrics();
-
-      const far = roadBoundsAtZ(1);
-      const near = roadBoundsAtZ(0);
-
-      // Road fill
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(far.left, far.y);
-      ctx.lineTo(far.right, far.y);
-      ctx.lineTo(near.right, near.y);
-      ctx.lineTo(near.left, near.y);
-      ctx.closePath();
-
-      const roadGrad = ctx.createLinearGradient(0, far.y, 0, near.y);
-      roadGrad.addColorStop(0, "#0b1220");
-      roadGrad.addColorStop(1, "#05070c");
-      ctx.fillStyle = roadGrad;
-      ctx.fill();
-
-      // Edge glow
-      ctx.strokeStyle = "rgba(255,255,255,0.08)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Lane highlight (current lane)
-      const playerLane = gameRef.current.player.lane;
-      ctx.beginPath();
-      const farL = laneEdgeX(playerLane, 1);
-      const farR = laneEdgeX(playerLane + 1, 1);
-      const nearL = laneEdgeX(playerLane, 0);
-      const nearR = laneEdgeX(playerLane + 1, 0);
-
-      ctx.moveTo(farL, far.y);
-      ctx.lineTo(farR, far.y);
-      ctx.lineTo(nearR, near.y);
-      ctx.lineTo(nearL, near.y);
-      ctx.closePath();
-
-      const hlGrad = ctx.createLinearGradient(0, far.y, 0, near.y);
-      hlGrad.addColorStop(0, "rgba(239,68,68,0.05)");
-      hlGrad.addColorStop(1, "rgba(239,68,68,0.18)");
-      ctx.fillStyle = hlGrad;
-      ctx.fill();
-
-      // Lane lines
-      ctx.lineWidth = 2;
-      for (let i = 1; i < LANE_COUNT; i++) {
-        const xFar = laneEdgeX(i, 1);
-        const xNear = laneEdgeX(i, 0);
-        ctx.strokeStyle = "rgba(255,255,255,0.10)";
-        ctx.setLineDash([10, 14]);
-        ctx.beginPath();
-        ctx.moveTo(xFar, far.y);
-        ctx.lineTo(xNear, near.y);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-
-      // Motion dashes
-      for (let lane = 0; lane < LANE_COUNT; lane++) {
-        for (let k = 0; k < 10; k++) {
-          const z = k / 10;
-          const t = (gameRef.current.time || 0) * 0.001;
-          const speed = gameRef.current.speed || 1;
-          const moving = (t * (0.8 + speed * 0.12) + lane * 0.07) % 1;
-          const zz = 1 - ((z + moving) % 1);
-          const b = roadBoundsAtZ(zz);
-          const x = laneCenterX(lane, zz);
-          const scale = 0.25 + (1 - zz) * 1.2;
-          const dashH = 6 * scale;
-          const dashW = 2.2 * scale;
-          ctx.fillStyle = "rgba(255,255,255,0.10)";
-          ctx.fillRect(x - dashW / 2, b.y - dashH / 2, dashW, dashH);
-        }
-      }
-
-      // Fog / vignette
-      const fog = ctx.createLinearGradient(0, far.y, 0, near.y);
-      fog.addColorStop(0, "rgba(0,0,0,0.55)");
-      fog.addColorStop(0.35, "rgba(0,0,0,0.25)");
-      fog.addColorStop(1, "rgba(0,0,0,0.00)");
-      ctx.fillStyle = fog;
-      ctx.fillRect(0, 0, w, h);
-
-      ctx.restore();
-
-      // Lane indicator UI (top-left)
-      ctx.save();
-      ctx.font = "bold 14px Arial";
-      ctx.fillStyle = "rgba(255,255,255,0.85)";
-      ctx.textAlign = "left";
-      ctx.fillText(`Lane: ${playerLane + 1}/${LANE_COUNT}`, 18, 24);
-      ctx.restore();
-    };
-
-    // --- DEPTH SPEED SCALING ---
-    // Increase obstacle z velocity as z → 0
-    // Add slight lateral parallax on lane change
-    // Camera shake on near misses
-
-    // Helper for camera shake
-    let cameraShake = 0;
-    let shakeDecay = 0.92;
-
-    // Modify updateGame to add speed scaling and shake
-    const updateGame = (dt: number) => {
-      if (gameState !== "playing") return;
+      const now = performance.now();
+      const last = lastTickRef.current || now;
+      const rawDt = now - last;
+      const dt = Math.min(rawDt, 50);
+      lastTickRef.current = now;
 
       const game = gameRef.current;
       const m = metrics();
 
-      game.time += dt * 1000;
+      game.time += dt;
 
-      // spawn timers
-      game.spawnObstacleIn -= dt;
-      if (game.spawnObstacleIn <= 0) {
-        console.log("SPAWN OBSTACLE", game.time, game.obstacles.length);
-        spawnObstacle(game.obstacles, LANE_COUNT);
-        game.spawnObstacleIn = 0.9;
+      // movement / distance
+      game.distance += (dt / 1000) * game.speed * 28;
+
+      // compute score ONCE
+      game.internalScore = computeScore(game);
+      scoreRef.current = game.internalScore;
+
+      // throttle React state updates
+      if (game.frame % 10 === 0) setScore(game.internalScore);
+
+      // earn +1 life every 5k points
+      const nextMilestone = (game.lifeMilestone + 1) * 5000;
+      if (game.internalScore >= nextMilestone && game.lives < game.maxLives) {
+        game.lives += 1;
+        game.lifeMilestone += 1;
+        pushPopup("+1 LIFE", road.laneCenterX(game.player.lane, 0), metrics().groundY - 90, "rgba(74,222,128,0.95)");
       }
 
-      game.spawnCoinIn -= dt;
-      if (game.spawnCoinIn <= 0) {
-        console.log("SPAWN COIN", game.time, game.coins.length);
-        spawnCoin(game.coins, LANE_COUNT);
-        game.spawnCoinIn = 0.9;
+      // speed based on score (ONCE)
+      game.speed = scaledSpeed(game.internalScore);
+
+      // popups update
+      updatePopups(game.popups);
+
+      // spawns
+      const { obstacleMs, coinMs } = difficulty(game.distance);
+      const tier = getTier(game.internalScore);
+      const tierMult = tier === 1 ? 1.0 : tier === 2 ? 0.9 : tier === 3 ? 0.8 : 0.7;
+
+      obstacleCooldownRef.current -= dt;
+      coinCooldownRef.current -= dt;
+
+      const MAX_OBS = tier === 1 ? 5 : tier === 2 ? 6 : tier === 3 ? 7 : 8;
+      const MAX_COINS = 10;
+
+      if (obstacleCooldownRef.current <= 0 && game.obstacles.length < MAX_OBS) {
+        spawnObstaclePack(game, LANE_COUNT, tier);
+        obstacleCooldownRef.current = obstacleMs * tierMult;
       }
 
-      // movement
+      if (coinCooldownRef.current <= 0 && game.coins.length < MAX_COINS) {
+        const bonusChance = tier === 1 ? 0.25 : tier === 2 ? 0.35 : tier === 3 ? 0.45 : 0.55;
+        if (Math.random() < bonusChance) spawnCoin(game.coins, LANE_COUNT);
+        coinCooldownRef.current = coinMs * tierMult;
+      }
+
+      // advance world
       stepDepth(game.obstacles, game.coins, game.speed);
 
       // player
-      updatePlayer(game.player, dt, m);
+      updatePlayer(game.player, dt / 1000, m);
 
       // collisions
       checkCollisions({
@@ -379,82 +545,91 @@ export default function QuanRunnerPage() {
         m,
         obstacles: game.obstacles,
         coins: game.coins,
-        onHit: endGame,
+        laneCenterX: road.laneCenterX,
+        zToY: road.zToY,
+        zToScale: road.zToScale,
+        onHit: () => {
+          const now = Date.now();
+          if (game.invincibleUntil && now < game.invincibleUntil) return;
+
+          game.lives -= 1;
+          game.hitFlash = 1;
+          game.invincibleUntil = now + 1100;
+
+          game.combo = 0;
+          game.comboUntil = 0;
+
+          if (game.lives <= 0) endGame();
+        },
         onCoin: (coin) => {
           coin.collected = true;
           coin.anim = 1;
-          // Particle burst!
-          const x = road.laneCenterX(coin.lane, coin.z);
-          const y = road.zToY(coin.z) - 30 * road.zToScale(coin.z);
-          for (let i = 0; i < 8; i++) {
-            const angle = (Math.PI * 2 * i) / 8;
-            game.particles.push({
-              x, y,
-              vx: Math.cos(angle) * 2,
-              vy: Math.sin(angle) * 2,
-              alpha: 1,
-              color: "#fbbf24",
-              life: 18,
-            });
-          }
+
+          const now = Date.now();
+          if (game.comboUntil && now < game.comboUntil) game.combo += 1;
+          else game.combo = 1;
+          game.comboUntil = now + COMBO_WINDOW_MS;
+
+          const bonus = comboBonus(game.combo);
+          game.coinScore += COIN_VALUE;
+          game.bonusScore += bonus;
+
+          const px = road.laneCenterX(coin.lane, coin.z);
+          const py = road.zToY(coin.z) - 55 * road.zToScale(coin.z);
+
+          pushPopup("+10", px, py, "rgba(251,191,36,0.98)");
+          if (bonus > 0) pushPopup(`+${bonus} COMBO`, px, py - 26, "rgba(255,255,255,0.95)");
         },
       });
 
-      // score
-      game.distance += game.speed * dt * 60;
-      const distanceScore = Math.floor(game.distance / 10);
-      game.internalScore = distanceScore + game.coinScore;
-      scoreRef.current = game.internalScore;
-      if (game.frame % 15 === 0) setScore(game.internalScore);
+      // near miss
+      const NEAR_MISS_Z = 0.06;
+      for (const obs of game.obstacles) {
+        if (obs._nearMissChecked) continue;
+        if (obs.z < NEAR_MISS_Z && obs.z > -0.02) {
+          if (game.player.lane !== obs.lane) {
+            game.nearMisses += 1;
+            game.bonusScore += NEAR_MISS_VALUE;
 
+            const px = road.laneCenterX(obs.lane, obs.z);
+            const py = road.zToY(obs.z) - 40 * road.zToScale(obs.z);
+            pushPopup("+15 NEAR MISS", px, py, "rgba(96,165,250,0.98)");
+          }
+          obs._nearMissChecked = true;
+        }
+      }
+
+      game.comboGlow = Math.max(0, (game.comboGlow ?? 0) - 0.06);
       game.frame++;
     };
 
-    // --- Parallax effect on lane change ---
-    let lastLane = gameRef.current.player.lane;
-    let parallaxOffset = 0;
+    const render = () => {
+      updateGame();
 
-    function applyParallax() {
-      const currentLane = gameRef.current.player.lane;
-      if (currentLane !== lastLane) {
-        parallaxOffset = (currentLane - lastLane) * 18;
-        lastLane = currentLane;
-      }
-      // Ease parallax back to zero
-      parallaxOffset *= 0.85;
-      if (Math.abs(parallaxOffset) < 0.5) parallaxOffset = 0;
-    }
-
-    // --- Modify render to apply shake and parallax ---
-    const render = (ts?: number) => {
-      const now = ts ?? performance.now();
-      let dt = 1 / 60;
-
-      if (lastTimeRef.current !== null) {
-        dt = Math.min(0.05, (now - lastTimeRef.current) / 1000);
-      }
-      lastTimeRef.current = now;
-
-      updateGame(dt); // ✅ ONLY place logic runs
-
-      ctx.save();
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // --- DRAW ONLY ---
       const m = metrics();
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, m.w, m.h);
+      const g = gameRef.current;
+
+      importedDrawParallax(ctx, g.time, g.speed, m.w, m.h, [
+        { src: "/games/quan-runner/bg-far.png", factor: 0.02 },
+        { src: "/games/quan-runner/bg-mid.png", factor: 0.05 },
+        { src: "/games/quan-runner/bg-near.png", factor: 0.09 },
+      ]);
 
       road.drawRoad3D(ctx, {
         w: m.w,
         h: m.h,
         laneCount: LANE_COUNT,
-        playerLane: gameRef.current.player.lane,
-        timeMs: gameRef.current.time,
-        speed: gameRef.current.speed,
+        playerLane: g.player.lane,
+        timeMs: g.time,
+        speed: g.speed,
       });
 
       drawObstacles({
         ctx,
-        obstacles: gameRef.current.obstacles,
+        obstacles: g.obstacles,
         laneCenterX: road.laneCenterX,
         zToY: road.zToY,
         zToScale: road.zToScale,
@@ -462,7 +637,7 @@ export default function QuanRunnerPage() {
 
       drawCoins({
         ctx,
-        coins: gameRef.current.coins,
+        coins: g.coins,
         laneCenterX: road.laneCenterX,
         zToY: road.zToY,
         zToScale: road.zToScale,
@@ -470,23 +645,33 @@ export default function QuanRunnerPage() {
 
       drawPlayer(ctx, {
         m,
-        player: gameRef.current.player,
+        player: g.player,
         laneCenterX: road.laneCenterX,
         logoImg: logoImgRef.current,
+        timeMs: g.time,
       });
 
       drawHUD(ctx, {
-        score,
-        speed: gameRef.current.speed,
-        jumps: `Jumps: ${gameRef.current.player.jumpsRemaining}`,
-        anim: scoreAnim,
+        score: g.internalScore,
+        speed: g.speed,
+        jumps: `Jumps: ${g.player.jumpsRemaining}`,
+        lives: g.lives,
+        maxLives: g.maxLives,
+        anim: g.hitFlash,
+        invincible: g.invincibleUntil ? Date.now() < g.invincibleUntil : false,
+        combo: g.combo,
+        comboGlow: g.comboGlow ?? 0,
       });
 
-      ctx.restore();
+      drawPopups(ctx, g.popups);
+
       animationId = requestAnimationFrame(render);
     };
 
-    // (removed duplicate jump function, now defined above useEffect)
+    // input
+    let startX = 0;
+    let startY = 0;
+    let startTime = 0;
 
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.code === "ArrowUp") {
@@ -519,29 +704,26 @@ export default function QuanRunnerPage() {
       const ady = Math.abs(dy);
       const dt = Date.now() - startTime;
 
-      // quick tap = jump
       if (adx < 12 && ady < 12 && dt < 250) {
-        jump();
+        doJump();
         return;
       }
 
-      // swipe
       if (ady > adx) {
-        if (dy < -20) jump();
-        else if (dy > 20) slide();
+        if (dy < -20) doJump();
+        else if (dy > 20) doSlide();
       } else {
-        if (dx > 20) setLane(1);
-        else if (dx < -20) setLane(-1);
+        if (dx > 20) doLane(1);
+        else if (dx < -20) doLane(-1);
       }
     };
 
     canvas.style.touchAction = "none";
     canvas.addEventListener("pointerdown", handlePointerDown);
     canvas.addEventListener("pointerup", handlePointerUp);
-
     window.addEventListener("keydown", handleKeyPress);
 
-    render(); // ALWAYS run render loop
+    render();
 
     return () => {
       cancelAnimationFrame(animationId);
@@ -549,172 +731,12 @@ export default function QuanRunnerPage() {
       canvas.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("keydown", handleKeyPress);
     };
-  }, [gameState, endGame]);
-
-  // Place this helper function near the top of your component (before startGame)
-  const getCanvasMetrics = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const w = canvas.width / dpr;
-    const h = canvas.height / dpr;
-    const groundY = h - 60;
-    const playerSize = Math.max(36, Math.min(52, w / 11));
-
-    return { dpr, w, h, groundY, playerSize };
-  };
-
-  // Replace your startGame function with this:
-  const startGame = () => {
-    const m = getCanvasMetrics();
-    if (!m) return;
-
-    const { groundY, playerSize } = m;
-
-    gameRef.current = {
-      player: {
-        x: 100,
-        y: groundY - playerSize - 35,
-        velocityY: 0,
-        isJumping: false,
-        jumpsRemaining: 2,
-        lane: 1,
-        isSliding: false,
-        slideUntil: 0,
-      },
-      obstacles: [] as Array<{ lane: number; z: number; type: "block" | "spike"; width: number; height: number }>,
-      coins: [] as Array<{ lane: number; z: number; collected: boolean }>,
-      frame: 0,
-      speed: 5,
-      animationFrame: 0,
-      internalScore: 0,
-      coinScore: 0,
-      time: 0,
-      spawnObstacleIn: 0.9,
-      spawnCoinIn: 0.7,
-      distance: 0,
-      particles: [] as Array<{ x: number; y: number; vx: number; vy: number; alpha: number; color: string; life: number }>,
-      playerTrail: [] as Array<{ x: number; y: number; alpha: number }>,
-      threatLevel: 0, // 0–100
-      combo: 0,
-      nearMisses: 0,
-      projectiles: [] as Array<{ lane: number; z: number; warning: boolean; speed: number }>,
-    };
-
-    // Force a first spawn so the system is alive
-    spawnObstacle(gameRef.current.obstacles, LANE_COUNT);
-    spawnCoin(gameRef.current.coins, LANE_COUNT);
-
-    // Make next spawns come quickly
-    gameRef.current.spawnObstacleIn = 0.25;
-    gameRef.current.spawnCoinIn = 0.35;
-
-    setScore(0);
-    scoreRef.current = 0;
-    setGameState("playing");
-  };
-
-  // Add this useEffect after your other useEffects, and make sure your main container uses ref={wrapRef}
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
-
-    const resize = () => {
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const cssW = Math.min(wrap.clientWidth, 960);
-      const maxH = Math.floor(window.innerHeight * 0.72);
-      const cssH = Math.min(Math.round(cssW * 0.72), maxH); // taller than 16:9
-
-      canvas.style.width = `${cssW}px`;
-      canvas.style.height = `${cssH}px`;
-
-      canvas.width = Math.floor(cssW * dpr);
-      canvas.height = Math.floor(cssH * dpr);
-
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(wrap);
-
-    window.addEventListener("orientationchange", resize);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("orientationchange", resize);
-    };
-  }, []);
-  // Accessibility: focus canvas on game start for keyboard controls
-  useEffect(() => {
-    if (gameState === "playing" && canvasRef.current) {
-      canvasRef.current.focus?.();
-    }
-  }, [gameState]);
-
-  // Place inside your big useEffect, same scope as metrics()
-  function playerScreenTopBottom() {
-    const m = metrics();
-    const p = gameRef.current.player;
-
-    // Compute laneY array based on canvas height and lane count
-    const laneCount = 3; // or use LANE_COUNT if accessible here
-    const laneY = Array.from({ length: laneCount }, (_, i) =>
-      m.h - 60 - (m.PLAYER_SIZE + 35) - ((laneCount - 1 - i) * ((m.h - 120 - (m.h - 60 - (m.PLAYER_SIZE + 35))) / (laneCount - 1)))
-    );
-
-    // baseY matches drawPlayer for ALL lanes
-    const baseY = laneY[p.lane] ?? (m.h - 60 - m.PLAYER_SIZE - 35);
-    const jumpOffset = baseY - p.y;
-    const py = m.h - 110 - jumpOffset;
-
-    const PLAYER_DRAW_SCALE = 1.15;
-    const headY = p.isSliding ? 12 : 0;
-
-    const playerTop = py + headY * PLAYER_DRAW_SCALE;
-    const playerH = (p.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND) * PLAYER_DRAW_SCALE;
-
-    return {
-      top: playerTop,
-      bottom: playerTop + playerH,
-    };
-  }
-
-  // ...place these input handlers in your component (replace your old setLane, slide, and jump handlers):
-
-  const doLane = (dir: -1 | 1) => {
-    if (gameState !== "playing") return;
-    switchLane(gameRef.current.player, dir, LANE_COUNT);
-  };
-
-  const doSlide = () => {
-    if (gameState !== "playing") return;
-    startSlide(gameRef.current.player, metrics());
-  };
-
-  const doJump = () => {
-    if (gameState !== "playing") return;
-    playerJump(gameRef.current.player, metrics());
-  };
-  // ...use doLane, doSlide, and doJump in your event handlers...
-
-  useEffect(() => {
-    if (score > 0) {
-      setScoreAnim(1); // trigger animation
-      const timeout = setTimeout(() => setScoreAnim(0), 200); // reset after 200ms
-      return () => clearTimeout(timeout);
-    }
-  }, [score]);
+  }, [metrics, endGame, pushPopup]);
 
   return (
     <div ref={wrapRef} className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
       <div className="max-w-4xl w-full">
-        <Link
-          href="/games"
-          className="inline-flex items-center gap-2 text-red-500 hover:text-red-400 mb-6 transition"
-        >
+        <Link href="/games" className="inline-flex items-center gap-2 text-red-500 hover:text-red-400 mb-6 transition">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -738,9 +760,9 @@ export default function QuanRunnerPage() {
         <div className="relative bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
           <canvas
             ref={canvasRef}
-            width={600}
-            height={400}
-            className="w-full touch-none select-none rounded-xl" // <-- add rounded-xl here
+            width={480}
+            height={320}
+            className="w-full touch-none select-none rounded-xl"
             onContextMenu={(e) => e.preventDefault()}
           />
 
@@ -767,65 +789,24 @@ export default function QuanRunnerPage() {
               <p className="text-2xl text-red-500 mb-1">Score: {score}</p>
               <p className="text-gray-400 mb-6">High Score: {highScore}</p>
               <div className="flex gap-3">
-                <button
-                  onClick={startGame}
-                  className="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold transition"
-                >
+                <button onClick={startGame} className="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold transition">
                   Play Again
                 </button>
-                <button
-                  onClick={() => setGameState("menu")}
-                  className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg font-bold transition"
-                >
+                <button onClick={() => setGameState("menu")} className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg font-bold transition">
                   Menu
                 </button>
               </div>
             </div>
-          )
-          }
+          )}
 
           {paused && (
             <div className="fade-in absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-40">
               <h2 className="text-3xl font-bold mb-4">Paused</h2>
-              <button
-                className="px-8 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold text-lg transition"
-                onClick={() => setPaused(false)}
-              >
+              <button className="px-8 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold text-lg transition" onClick={() => setPaused(false)}>
                 Resume
               </button>
             </div>
           )}
-
-          <div className="absolute left-0 right-0 bottom-0 flex justify-center gap-4 pb-4 pointer-events-none z-20">
-            <button
-              aria-label="Lane Left"
-              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 text-white rounded-full px-4 py-2 text-xl font-bold shadow transition-transform"
-              onClick={() => setLane(-1)}
-            >
-              ◀️
-            </button>
-            <button
-              aria-label="Jump"
-              className="pointer-events-auto bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-full px-6 py-2 text-xl font-bold shadow transition-transform"
-              onClick={() => jump()}
-            >
-              ⬆️
-            </button>
-            <button
-              aria-label="Slide"
-              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 text-white rounded-full px-4 py-2 text-xl font-bold shadow transition-transform"
-              onClick={() => slide()}
-            >
-              ⬇️
-            </button>
-            <button
-              aria-label="Lane Right"
-              className="pointer-events-auto bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 text-white rounded-full px-4 py-2 text-xl font-bold shadow transition-transform"
-              onClick={() => setLane(1)}
-            >
-              ▶️
-            </button>
-          </div>
 
           <button
             className="absolute top-3 right-3 z-30 bg-zinc-800/80 hover:bg-zinc-700 text-white rounded-full px-4 py-2 font-bold shadow transition"
@@ -840,12 +821,10 @@ export default function QuanRunnerPage() {
           <h3 className="font-bold mb-2">How to Play:</h3>
           <ul className="text-sm text-gray-400 space-y-1">
             <li>• Click or press SPACE/UP to jump</li>
-            <li>
-              • <span className="text-red-400 font-semibold">Press jump again mid-air for double jump!</span>
-            </li>
+            <li>• <span className="text-red-400 font-semibold">Press jump again mid-air for double jump!</span></li>
             <li>• Avoid green blocks and red spikes</li>
             <li>• Collect gold coins (+10 points)</li>
-            <li>• Distance = +1 point per frame</li>
+            <li>• Near miss bonus (+15)</li>
             <li>• Speed increases over time!</li>
           </ul>
         </div>
@@ -854,16 +833,4 @@ export default function QuanRunnerPage() {
   );
 }
 
-function spawnProjectile(
-  game: {
-    projectiles: Array<{ lane: number; z: number; warning: boolean; speed: number }>;
-  },
-  laneCount: number
-) {
-  const lane = Math.floor(Math.random() * laneCount);
-  game.projectiles.push({ lane, z: 1, warning: true, speed: 0.045 + Math.random() * 0.02 });
-  setTimeout(() => {
-    const p = game.projectiles.find(p => p.lane === lane && p.warning);
-    if (p) p.warning = false;
-  }, 500); // warning lasts 0.5s
-}
+// (Removed from here; move this helper inside the QuanRunnerPage component if you need to use it with refs)

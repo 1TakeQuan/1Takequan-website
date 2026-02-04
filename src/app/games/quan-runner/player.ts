@@ -94,97 +94,95 @@ export function getPlayerHitbox(player: Player, m: PlayerMetrics) {
     };
 }
 
+import { loadImage } from "./loadImage";
+const SPRITE_SRC = "/games/quan-runner/quan-runner-sprite.png";
+
+function getSprite() {
+  const img = loadImage(SPRITE_SRC);
+  return img;
+}
+
 export function drawPlayer(
-    ctx: CanvasRenderingContext2D,
-    opts: {
-        m: PlayerMetrics;
-        player: Player;
-        laneCenterX: (lane: number, z: number) => number;
-        logoImg?: HTMLImageElement | null;
-    }
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    m: PlayerMetrics;
+    player: Player;
+    laneCenterX: (lane: number, z: number) => number;
+    logoImg?: HTMLImageElement | null;
+    timeMs: number;
+  }
 ) {
-    const { m, player, laneCenterX, logoImg } = opts;
+  const { m, player, laneCenterX, timeMs } = opts;
+  const img = getSprite();
 
-    // player is near camera (z=0)
-    const px = laneCenterX(player.lane, 0);
-
-    // Convert world Y to screen-ish Y: your road near line is around (h - 60),
-    // but we want the character to sit slightly above bottom for readability.
-    // Use world y directly with a small offset:
-    const py = player.y - (m.h - (m.groundY + 50)); // stabilizes with resize
-
-    const scale = 1.15;
-    const t = Date.now() * 0.01;
-    const legAnim = Math.sin(t) * 10;
-
-    const playerSize = m.PLAYER_SIZE;
-    const torsoLen = player.isSliding ? 10 : 20;
-    const legBaseY = playerSize + torsoLen;
-    const legLen = 15;
-
+  if (!img || !img.complete || img.naturalWidth === 0) {
+    const x = laneCenterX(player.lane, 0);
     ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.fillStyle = "#000";
-    ctx.ellipse(
-      px, // player X position
-      m.groundY - 8, // just above the ground
-      m.PLAYER_W * 0.45, // width of shadow
-      m.PLAYER_W * 0.18, // height of shadow
-      0, 0, Math.PI * 2
+    ctx.fillStyle = "#f97316";
+    ctx.fillRect(
+      x - m.PLAYER_W / 2,
+      player.y,
+      m.PLAYER_W,
+      player.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND
     );
-    ctx.fill();
     ctx.restore();
+    return;
+  }
 
-    ctx.save();
+  const GRID_COLS = 12;
+  const GRID_ROWS = 8;
+  const frameW = img.naturalWidth / GRID_COLS;
+  const frameH = img.naturalHeight / GRID_ROWS;
 
-    // Add a subtle shadow/glow
-    ctx.shadowColor = "rgba(251,191,36,0.25)"; // soft gold glow
-    ctx.shadowBlur = 18;
+  type AnimKey = "idle" | "run" | "jump" | "slide";
+  const ROW_META: Record<AnimKey, { row: number; frames?: number; startCol?: number }> = {
+    idle: { row: 6 },
+    run: { row: 2 },
+    jump: { row: 7 },
+    slide: { row: 0 },
+  };
 
-    ctx.translate(px - (playerSize * scale) / 2, py);
-    ctx.scale(scale, scale);
+  let anim: AnimKey = "run";
+  if (player.isSliding) anim = "slide";
+  else if (player.isJumping || player.velocityY < -0.2) anim = "jump";
 
-    ctx.strokeStyle = "#ef4444";
-    ctx.lineWidth = 4;
-    ctx.lineCap = "round";
+  const meta = ROW_META[anim];
+  const row = Math.max(0, Math.min(GRID_ROWS - 1, meta.row));
+  const startCol = Math.max(0, Math.min(GRID_COLS - 1, meta.startCol ?? 0));
+  const maxColsAvailable = GRID_COLS - startCol;
+  const frames = Math.max(1, Math.min(meta.frames ?? GRID_COLS, maxColsAvailable));
 
-    // torso
-    ctx.beginPath();
-    ctx.moveTo(playerSize / 2, playerSize);
-    ctx.lineTo(playerSize / 2, legBaseY);
-    ctx.stroke();
+  const animSpeedMs = 90;
+  const frameIdx = Math.floor(timeMs / animSpeedMs) % frames;
 
-    // legs
-    ctx.beginPath();
-    ctx.moveTo(playerSize / 2, legBaseY);
-    ctx.lineTo(playerSize / 2 - 8, legBaseY + legLen + legAnim);
-    ctx.stroke();
+  const sx = (startCol + frameIdx) * frameW;
+  const sy = row * frameH;
 
-    ctx.beginPath();
-    ctx.moveTo(playerSize / 2, legBaseY);
-    ctx.lineTo(playerSize / 2 + 8, legBaseY + legLen - legAnim);
-    ctx.stroke();
+  const baseH = player.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND;
+  const SCALE_STAND = 1.9;
+  const SCALE_SLIDE = 1.5;
+  const FOOT_OFFSET = 6;
+  const scale = player.isSliding ? SCALE_SLIDE : SCALE_STAND;
+  const destW = m.PLAYER_W * scale;
+  const destH = baseH * scale;
+  const centerX = laneCenterX(player.lane, 0);
+  const x = centerX - destW / 2;
+  const y = player.y + baseH - destH - FOOT_OFFSET;
 
-    // arms
-    ctx.beginPath();
-    ctx.moveTo(playerSize / 2, playerSize + 5);
-    ctx.lineTo(playerSize / 2 - 12, playerSize + 15 - legAnim);
-    ctx.stroke();
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = 1;
 
-    ctx.beginPath();
-    ctx.moveTo(playerSize / 2, playerSize + 5);
-    ctx.lineTo(playerSize / 2 + 12, playerSize + 15 + legAnim);
-    ctx.stroke();
+  // Ground shadow to anchor character to the road
+  const shadowY = player.y + baseH - FOOT_OFFSET + 4;
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.beginPath();
+  ctx.ellipse(centerX, shadowY, destW * 0.32, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 
-    // head
-    const headY = player.isSliding ? 12 : 0;
-    if (logoImg) ctx.drawImage(logoImg, 0, headY, playerSize, playerSize);
-    else {
-        ctx.fillStyle = "#ef4444";
-        ctx.beginPath();
-        ctx.arc(playerSize / 2, headY + playerSize / 2, playerSize / 2, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    ctx.restore();
+  ctx.drawImage(img, sx, sy, frameW, frameH, x, y, destW, destH);
+  ctx.restore();
 }
