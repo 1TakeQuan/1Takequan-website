@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePlayer } from "@/contexts/PlayerContext";
+import { TITLE_OVERRIDES } from "@/lib/music/titleOverrides";
 
 const rawLinks: string[] = [
   "https://music.youtube.com/watch?v=i_a2LhIVhJk&si=b-OhpkriOruRV7u1",
@@ -231,17 +232,16 @@ const rawLinks: string[] = [
   "https://music.youtube.com/watch?v=TTWtOaIaXcs&si=-iOkoJ3PeOCv2qFI",
 ];
 
-type Kind = "all" | "single" | "project" | "video" | "popular";
+type Kind = "all" | "project";
 
 type Item = {
   key: string;
   kind: Kind;
   id: string;
-  url: string;     // normalized to music.youtube.com/watch?v=ID
-  embed: string;   // youtube embed for web player
+  url: string; // normalized to music.youtube.com/watch?v=ID
+  embed: string; // youtube embed for web player
   thumb: string;
   title?: string;
-  tag?: string;
   releaseDate?: string;
 };
 
@@ -299,7 +299,6 @@ function buildItems(links: string[]): Item[] {
         // use standard embed for the web player (Music cannot be embedded)
         embed: `https://www.youtube-nocookie.com/embed/${videoId}`,
         thumb: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-        tag: Math.random() > 0.7 ? "popular" : undefined,
       });
       continue;
     }
@@ -350,190 +349,382 @@ async function fetchTitleFromVideoId(videoId: string): Promise<string | undefine
   }
 }
 
+const FALLBACK_TITLE = "1TakeQuan Track"; // shown only when a title genuinely can't be resolved
+
+// Resolved titles are cached so returning visitors get the sorted catalog immediately.
+const TITLE_CACHE_KEY = "1takequan_music_titles_v1";
+
+// Sort key for the A–Z catalog. Only used for ordering — the visible title is never altered.
+// Drops a leading "1TakeQuan -" style artist prefix (hyphen, en/em dash, colon or pipe), a
+// "1TakeQuan x/ft Name -" collab prefix, and any leading punctuation/quotes/emoji, so those don't
+// pile up under "1" or symbols.
+function sortKey(title: string) {
+  return title
+    .trim()
+    .replace(/^1\s*take\s*quan\s*[-–—:|]\s*/i, "")
+    // "1TakeQuan x Name - Song" / "1TakeQuan ft Name - Song": drop the collab credit, keep the song
+    .replace(/^1\s*take\s*quan\s+(?:x|ft\.?|feat\.?|featuring|&|and|with)\s+[^-–—:|]+?\s*[-–—:|]\s*/i, "")
+    .replace(/^[^\p{L}\p{N}]+/u, "")
+    .toLowerCase();
+}
+
+const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
 const FEATURED_ID = ""; // set a key from your catalog (e.g., "video:XXXXX")
+
+const WIDE = "mx-auto w-full max-w-[1500px] px-6 sm:px-8 lg:px-12";
+
+// Editorial discovery cards. Imagery is existing site photography from /public/gallery.
+// Not wired to catalog data — no track assignments are implied.
+const DISCOVERY = [
+  { title: "For New Fans", desc: "Start here — the essentials.", img: "/gallery/4.jpeg", pos: "object-[50%_30%]" },
+  { title: "Turn-Up Quan", desc: "High energy, stage-ready.", img: "/gallery/33.jpg", pos: "object-center" },
+  { title: "Pain / Late Night", desc: "Reflective, raw, 2AM vibe.", img: "/gallery/1.jpeg", pos: "object-[50%_30%]" },
+  { title: "Underrated", desc: "Sleeper picks the day-ones know.", img: "/gallery/39.JPG", pos: "object-center" },
+];
+
+// Split a raw YouTube title into song / credit / content type so the hero can
+// give each its own weight. Falls back gracefully when a title doesn't match.
+function splitTitle(raw: string): { song: string; credit: string; type?: string } {
+  let t = raw.trim();
+  let type: string | undefined;
+  let feature: string | undefined;
+  t = t.replace(/[(\[]\s*([^)\]]*?)\s*[)\]]/g, (m, inner: string) => {
+    if (!type && /official|video|audio|visualizer|lyric|performance/i.test(inner) && !/^(ft|feat)/i.test(inner)) {
+      type = inner;
+      return "";
+    }
+    const f = inner.match(/^(?:ft\.?|feat\.?|featuring)\s+(.+)$/i);
+    if (f && !feature) {
+      feature = f[1];
+      return "";
+    }
+    return m;
+  });
+  t = t.replace(/^1TakeQuan\s*[-–—:]\s*/i, "").replace(/\s+/g, " ").trim();
+  const split = t.match(/^(.*?)\s+(?:ft\.?|feat\.?|featuring)\s+(.+)$/i);
+  if (split) {
+    t = split[1].trim();
+    feature = feature ?? split[2].trim();
+  }
+  return { song: t || raw, credit: feature ? `1TakeQuan ft. ${feature}` : "1TakeQuan", type };
+}
+
+// Featured artwork with a branded placeholder underneath, so the first paint is
+// never an empty black box. Tries the high-res thumbnail, falls back to hqdefault.
+function HeroVisual({ id, fallbackThumb, onPlay }: { id?: string; fallbackThumb?: string; onPlay: () => void }) {
+  const [src, setSrc] = useState(id ? `https://img.youtube.com/vi/${id}/maxresdefault.jpg` : fallbackThumb);
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <div className="relative">
+      <div aria-hidden className="absolute inset-0 translate-x-3 translate-y-3 rounded-xl border border-red-500/40" />
+      <button
+        type="button"
+        onClick={onPlay}
+        aria-label="Play featured release"
+        className="group relative block aspect-video w-full overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-950 shadow-2xl shadow-red-600/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+      >
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-zinc-900 via-zinc-950 to-red-950/50 pb-28">
+          <Image src="/logo.PNG" alt="" width={64} height={64} className={`h-16 w-16 object-contain opacity-80 ${loaded ? "" : "animate-pulse"}`} />
+          <span className="text-xs font-bold uppercase tracking-[0.4em] text-zinc-500">1TakeQuan</span>
+        </div>
+        {src && (
+          <Image
+            src={src}
+            alt="Featured release artwork"
+            fill
+            unoptimized
+            priority
+            sizes="(max-width: 1024px) 100vw, 700px"
+            className={`scale-[1.2] object-cover transition-all duration-700 group-hover:scale-[1.25] ${loaded ? "opacity-100" : "opacity-0"}`}
+            onLoad={(e) => {
+              if (e.currentTarget.naturalWidth <= 120 && fallbackThumb && src !== fallbackThumb) setSrc(fallbackThumb);
+              else setLoaded(true);
+            }}
+            onError={() => {
+              if (fallbackThumb && src !== fallbackThumb) setSrc(fallbackThumb);
+            }}
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/90 text-white shadow-xl transition-transform group-hover:scale-110">
+            <svg className="ml-1 h-7 w-7" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+// Compact rectangular track card: artwork first, title second, play affordance third.
+// No raw IDs, no filler metadata — just enough to browse and tap.
+function TrackCard({ title, thumb, onSelect }: { title: string; thumb: string; onSelect: () => void }) {
+  const [broken, setBroken] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="group text-left rounded-md border border-zinc-800/80 bg-zinc-900/60 overflow-hidden transition-colors hover:border-red-500/50 hover:bg-zinc-900 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500"
+    >
+      <div className="relative aspect-square bg-zinc-800">
+        {!broken ? (
+          <Image
+            src={thumb}
+            alt={title}
+            fill
+            unoptimized
+            className="object-cover transition-transform duration-300 group-hover:scale-105"
+            sizes="(max-width: 640px) 45vw, (max-width: 1024px) 22vw, 300px"
+            onError={() => setBroken(true)}
+            onLoad={(e) => {
+              // YouTube serves a tiny grey placeholder (no error) when a thumbnail is missing.
+              if (e.currentTarget.naturalWidth <= 120) setBroken(true);
+            }}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
+            <svg className="h-6 w-6 text-zinc-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+          </div>
+        )}
+        <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/30" />
+        <div className="absolute bottom-1.5 right-1.5 lg:bottom-2.5 lg:right-2.5 flex h-6 w-6 lg:h-8 lg:w-8 items-center justify-center rounded-full bg-red-500 text-white opacity-90 shadow-md transition-transform group-hover:scale-110 group-hover:opacity-100">
+          <svg className="ml-0.5 h-3 w-3 lg:h-4 lg:w-4" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </div>
+      </div>
+      <div className="flex h-[2.6rem] items-start px-2 py-2 sm:h-[2.9rem] lg:h-[3.4rem] lg:px-3">
+        <p className="line-clamp-2 break-words text-[11px] font-medium leading-tight text-gray-100 sm:text-xs lg:text-sm">
+          {title}
+        </p>
+      </div>
+    </button>
+  );
+}
 
 export default function MusicPage() {
   const items = useMemo(() => buildItems(rawLinks), []);
-  const { setPlaylist, currentTrack, currentIndex } = usePlayer();
+  const { playlist, setPlaylist, currentTrack, isPlaying, pause } = usePlayer();
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [modalItem, setModalItem] = useState<Item | null>(null);
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<Kind>("all");
-  const [layout, setLayout] = useState<"rows" | "rail">("rail");
+  const [titleWaited, setTitleWaited] = useState(false);
+  const [metaDone, setMetaDone] = useState(false);
 
   useEffect(() => {
+    const t = setTimeout(() => setTitleWaited(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Title lookup. Cached titles are used straight away; only missing ones hit noembed.
+  // `metaDone` flips once every lookup (including the retry pass) has finished — the catalog is
+  // shown A–Z only then, so cards never reshuffle while titles are still streaming in.
+  useEffect(() => {
     let cancelled = false;
+    const BATCH = 18;
+    const DELAY_MS = 250; // throttle to avoid rate limits
+
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const all: Record<string, string> = {};
+    try {
+      const cached = JSON.parse(localStorage.getItem(TITLE_CACHE_KEY) || "{}") as Record<string, string>;
+      for (const it of items) if (typeof cached[it.key] === "string" && cached[it.key]) all[it.key] = cached[it.key];
+    } catch {}
+    if (Object.keys(all).length > 0) setMeta({ ...all });
+
     (async () => {
-      const pairs = await Promise.all(
-        items.map(async (it) => {
-          const title = await fetchTitle(it.url);
-          return title ? [it.key, title] : null;
-        })
-      );
+      const todo = items.filter((it) => !all[it.key]);
+
+      for (let i = 0; i < todo.length; i += BATCH) {
+        const pairs = await Promise.all(
+          todo.slice(i, i + BATCH).map(async (it) => {
+            const title = await fetchTitleFromVideoId(it.id);
+            return title ? ([it.key, title] as const) : null;
+          })
+        );
+
+        if (cancelled) return;
+
+        for (const p of pairs) if (p) all[p[0]] = p[1];
+        setMeta({ ...all });
+
+        if (i + BATCH < todo.length) await sleep(DELAY_MS);
+      }
+
+      // A batch can hit a transient noembed failure; retry those titles once, one at a time.
+      // Videos with a known permanent noembed failure (TITLE_OVERRIDES) are skipped.
+      for (const it of items) {
+        if (all[it.key] || TITLE_OVERRIDES[it.id]) continue;
+        await sleep(DELAY_MS);
+        const title = await fetchTitleFromVideoId(it.id);
+        if (cancelled) return;
+        if (title) {
+          all[it.key] = title;
+          setMeta({ ...all });
+        }
+      }
+
       if (cancelled) return;
-      const next: Record<string, string> = {};
-      for (const p of pairs) if (p) next[p[0]] = p[1];
-      setMeta(next);
+      try {
+        localStorage.setItem(TITLE_CACHE_KEY, JSON.stringify(all));
+      } catch {}
+      setMetaDone(true);
     })();
+
     return () => {
       cancelled = true;
     };
   }, [items]);
 
-  const tracks = useMemo(() => {
-    return items.map((it) => ({
-      id: it.id,
-      title: meta[it.key] ?? meta[it.id] ?? it.title ?? it.id, // more fallbacks
-      cover: it.thumb,
-      artists: ["1TakeQuan"],
-      sources: { youtube: it.url },
-    }));
-  }, [items, meta]);
+  // Display title: the resolved noembed title, else a known override, else the placeholder.
+  const titleFor = (it: Item) => meta[it.key] ?? meta[it.id] ?? TITLE_OVERRIDES[it.id] ?? it.title ?? FALLBACK_TITLE;
 
-  const didInit = useRef(false);
-  const didTitleRefresh = useRef(false);
+  const toTrack = (it: Item) => ({
+    id: it.id,
+    title: titleFor(it), // never show raw IDs
+    cover: it.thumb,
+    artists: ["1TakeQuan"],
+    sources: { youtube: it.url },
+  });
 
+  // The final A–Z order. Only established once every title is resolved; until then the catalog
+  // shows a loading state instead of a list that would keep reordering.
+  const sortedItems = useMemo(() => {
+    if (!metaDone) return items;
+    const withKey = items.map((it) => {
+      const title = meta[it.key] ?? meta[it.id] ?? TITLE_OVERRIDES[it.id] ?? it.title ?? FALLBACK_TITLE;
+      return { it, title, key: sortKey(title) };
+    });
+    withKey.sort((x, y) => collator.compare(x.key, y.key) || collator.compare(x.title, y.title) || (x.it.id < y.it.id ? -1 : 1));
+    return withKey.map((w) => w.it);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, meta, metaDone]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const tracks = useMemo(() => items.map(toTrack), [items, meta]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sortedTracks = useMemo(() => sortedItems.map(toTrack), [sortedItems, meta]);
+
+  // Seed the global player once. If the player already has a playlist (e.g. the visitor
+  // navigated away and back), leave it alone so the current track isn't reset.
   useEffect(() => {
-    // only initialize once (prevents scroll/player resets)
-    if (didInit.current) return;
-    if (tracks.length === 0) return;
-
+    if (playlist.length > 0 || tracks.length === 0) return;
     setPlaylist(tracks, 0);
-    didInit.current = true;
-  }, [tracks, setPlaylist]);
+  }, [playlist.length, tracks, setPlaylist]);
 
+  // Keep the global playlist in step with the page:
+  //  - while titles stream in: fill in resolved titles, keeping the existing order;
+  //  - once done: switch to the same A–Z order as the grid, so Next/Previous follow what the fan sees.
+  // While a song is playing its track object is kept as-is — handing the player a new object for
+  // the same song makes it reload the video (restarting the song).
   useEffect(() => {
-    // once meta is loaded, refresh titles without changing what's playing
-    if (!didInit.current) return;
-    if (didTitleRefresh.current) return;
-    if (!meta || Object.keys(meta).length === 0) return;
+    if (playlist.length === 0) return;
 
-    const currentId = currentTrack?.id;
-    const idx = currentId ? tracks.findIndex(t => t.id === currentId) : currentIndex;
-    setPlaylist(tracks, idx >= 0 ? idx : 0);
+    const fresh = new Map(tracks.map((t) => [t.id, t]));
+    const base = metaDone
+      ? sortedTracks
+      : playlist.map((t) => {
+          const f = fresh.get(t.id);
+          return f && f.title !== FALLBACK_TITLE ? f : t;
+        });
+    const next = isPlaying && currentTrack ? base.map((t) => (t.id === currentTrack.id ? currentTrack : t)) : base;
 
-    didTitleRefresh.current = true;
-  }, [meta, tracks, currentTrack?.id, currentIndex, setPlaylist]);
+    const sig = (list: { id: string; title: string }[]) => list.map((t) => `${t.id}\t${t.title}`).join("\n");
+    if (sig(next) === sig(playlist)) return;
+
+    const idx = currentTrack ? next.findIndex((t) => t.id === currentTrack.id) : 0;
+    setPlaylist(next, idx >= 0 ? idx : 0);
+  }, [tracks, sortedTracks, metaDone, playlist, currentTrack, isPlaying, setPlaylist]);
+
+  // Opening a track in the modal also points the global player at it (paused, so only the modal
+  // plays) — the player then shows the same resolved title, and Next/Previous continue from here.
+  const selectTrack = (it: Item) => {
+    setModalItem(it);
+    pause();
+    const idx = playlist.findIndex((t) => t.id === it.id);
+    if (idx >= 0) setPlaylist(playlist, idx);
+  };
 
   const featured = items.find((it) => it.key === FEATURED_ID) ?? items[0];
+  const heroTitle = meta[featured?.key ?? ""];
+  const heroParts = heroTitle ? splitTitle(heroTitle) : null;
+
+  // Only "search across all tracks" is truthful with this data — the old
+  // Singles / Projects / Videos / Popular tabs never matched real categories
+  // (Popular was literally randomized), so they've been removed rather than
+  // left in place lying to fans about what they filter.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return items.filter((it) => {
-      if (tab === "popular" && it.tag !== "popular") return false;
-      if (tab !== "all" && tab !== "popular" && it.kind !== tab) return false;
-      const title = meta[it.key] ?? it.id;
-      if (!q) return true;
-      return title.toLowerCase().includes(q) || it.id.toLowerCase().includes(q);
+    if (!q) return sortedItems;
+    return sortedItems.filter((it) => {
+      const title = meta[it.key] ?? meta[it.id] ?? TITLE_OVERRIDES[it.id] ?? it.title ?? "";
+      return title.toLowerCase().includes(q);
     });
-  }, [items, meta, query, tab]);
-
-  const rows = useMemo(() => {
-    const out: typeof filtered[] = [];
-    for (let i = 0; i < filtered.length; i += 10) out.push(filtered.slice(i, i + 10));
-    return out;
-  }, [filtered]);
-
-  const Card = ({ it }: { it: Item }) => {
-    const title = meta[it.key] ?? (it.kind === "project" ? `Project • ${it.id}` : `Video • ${it.id}`);
-    return (
-      <div
-        className="snap-start rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 hover:border-red-500/60 transition group cursor-pointer"
-        onClick={() => setModalItem(it)}
-      >
-        <div className="relative aspect-[5/3] bg-black">
-          <Image src={it.thumb} alt={title} fill className="object-cover" unoptimized sizes="240px" />
-          <button
-            className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-            aria-label="Play"
-          >
-            <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center shadow">
-              <svg className="w-5 h-5 ml-0.5" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </div>
-          </button>
-        </div>
-        <div className="px-3 py-2">
-          <div className="text-xs font-semibold text-white line-clamp-2">{title}</div>
-          <div className="mt-1 flex items-center justify-between text-[11px] text-gray-400">
-            <span className="truncate pr-2">{it.id}</span>
-            <a href={it.url} target="_blank" rel="noreferrer" className="hover:text-red-300" onClick={(e) => e.stopPropagation()}>
-              Open
-            </a>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const Rail = ({ data }: { data: Item[] }) => {
-    const ref = useRef<HTMLDivElement>(null);
-    const scrollPos = useRef(0);
-
-    const CARD_W = 192;
-    const scrollByCards = (dir: number) => {
-      if (!ref.current) return;
-      ref.current.scrollBy({ left: dir * CARD_W * 10, behavior: "smooth" });
-    };
-
-    useEffect(() => {
-      const el = ref.current;
-      if (!el) return;
-
-      const onScroll = () => {
-        scrollPos.current = el.scrollLeft;
-      };
-
-      el.addEventListener("scroll", onScroll, { passive: true });
-      return () => el.removeEventListener("scroll", onScroll);
-    }, []);
-
-    useEffect(() => {
-      const el = ref.current;
-      if (!el) return;
-      // restore after re-render / data changes
-      el.scrollLeft = scrollPos.current;
-    }, [data.length]);
-
-    return (
-      <div className="relative">
-        <div ref={ref} className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth">
-          {data.map((it) => (
-            <div key={it.key} style={{ minWidth: 180, width: 180 }}>
-              <Card it={it} />
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={() => scrollByCards(-1)}
-          className="hidden sm:flex absolute left-1 top-1/2 -translate-y-1/2 z-10 h-9 w-9 items-center justify-center rounded-full bg-black/70 border border-zinc-700 hover:bg-black/90"
-          aria-label="Scroll left"
-        >
-          ‹
-        </button>
-        <button
-          onClick={() => scrollByCards(1)}
-          className="hidden sm:flex absolute right-1 top-1/2 -translate-y-1/2 z-10 h-9 w-9 items-center justify-center rounded-full bg-black/70 border border-zinc-700 hover:bg-black/90"
-          aria-label="Scroll right"
-        >
-          ›
-        </button>
-      </div>
-    );
-  };
+  }, [sortedItems, meta, query]);
 
   return (
-    <main className="min-h-screen bg-black text-white pb-16">
-      <section className="relative overflow-hidden border-b border-zinc-900 bg-gradient-to-br from-zinc-900 via-black to-zinc-950">
-        <div className="max-w-6xl mx-auto px-6 py-14 grid gap-10 lg:grid-cols-[1.2fr_1fr] items-center">
+    <main className="-mx-2 -mt-20 min-h-screen pb-16 pt-20 text-white sm:-mx-4 md:-mx-6">
+      {/* Local, presentational fix for white nav links disappearing over bright
+          hero imagery. Sits below the fixed nav (z-50) and above hero content. */}
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-40 h-28 bg-gradient-to-b from-black/80 via-black/35 to-transparent" />
+      {/* HERO — featured release */}
+      <section className="relative isolate overflow-hidden border-b border-zinc-900 bg-black">
+        <Image
+          src="/gallery/28.JPG"
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          className="-z-20 object-cover object-[50%_25%] opacity-50"
+        />
+        <div className="absolute inset-0 -z-10 bg-gradient-to-r from-black via-black/75 to-black/20" />
+        <div className="absolute inset-x-0 bottom-0 -z-10 h-32 bg-gradient-to-t from-black to-transparent" />
+        <div className={`${WIDE} grid items-center gap-12 pb-16 pt-32 lg:min-h-[640px] lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:pt-36`}>
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-red-400">Featured Release</p>
-            <h1 className="mt-2 text-4xl sm:text-5xl font-bold">{meta[featured?.key ?? ""] ?? "1TakeQuan — Featured"}</h1>
-            <p className="mt-4 text-gray-300">"The Great Quan — not a tape, a statement."</p>
-            <div className="mt-6 flex flex-wrap gap-3">
+            <p className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.3em] text-red-400">
+              <span className="h-px w-10 bg-red-500" />
+              Featured Release
+            </p>
+            {heroParts ? (
+              <>
+                <h1 className="mt-5 break-words text-5xl font-black uppercase leading-[0.95] tracking-tight sm:text-6xl xl:text-7xl">
+                  {heroParts.song}
+                </h1>
+                <p className="mt-4 text-xl font-semibold text-gray-100 sm:text-2xl">{heroParts.credit}</p>
+                {heroParts.type && (
+                  <p className="mt-3 inline-block rounded-sm border border-red-500/60 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.25em] text-red-300">
+                    {heroParts.type}
+                  </p>
+                )}
+              </>
+            ) : titleWaited ? (
+              <h1 className="mt-5 text-5xl font-black uppercase leading-[0.95] tracking-tight sm:text-6xl xl:text-7xl">
+                New Music
+              </h1>
+            ) : (
+              <div aria-hidden className="mt-5 space-y-3">
+                <div className="h-14 w-4/5 animate-pulse rounded bg-zinc-800/80" />
+                <div className="h-14 w-3/5 animate-pulse rounded bg-zinc-800/80" />
+                <div className="mt-5 h-6 w-2/5 animate-pulse rounded bg-zinc-800/60" />
+              </div>
+            )}
+            <p className="mt-8 max-w-md border-l-2 border-red-500 pl-4 text-lg italic text-gray-300">
+              &quot;The Great Quan — not a tape, a statement.&quot;
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
               <button
-                onClick={() => setModalItem(featured)}
-                className="rounded-full bg-red-500 text-white px-5 py-2.5 text-sm font-semibold hover:bg-red-400"
+                onClick={() => featured && selectTrack(featured)}
+                className="rounded-full bg-red-500 px-7 py-3 text-sm font-semibold text-white transition-colors hover:bg-red-400"
               >
                 ▶ Play
               </button>
@@ -541,99 +732,110 @@ export default function MusicPage() {
                 href={featured?.url ?? "#"}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-full border border-zinc-700 px-5 py-2.5 text-sm hover:border-red-400 hover:text-red-300"
+                className="rounded-full border border-zinc-600 px-7 py-3 text-sm transition-colors hover:border-red-400 hover:text-red-300"
               >
-                🎥 Watch Video
+                Watch Video ↗
               </a>
-              <button className="rounded-full border border-zinc-700 px-5 py-2.5 text-sm hover:border-red-400 hover:text-red-300">
-                💾 Save
-              </button>
             </div>
           </div>
-          <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl shadow-red-500/20">
-            {featured ? (
-              <Image src={featured.thumb} alt="Featured artwork" fill className="object-cover" unoptimized sizes="600px" />
-            ) : (
-              <div className="w-full h-full bg-zinc-800" />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
-          </div>
+          <HeroVisual id={featured?.id} fallbackThumb={featured?.thumb} onPlay={() => featured && selectTrack(featured)} />
         </div>
       </section>
 
-      <section className="max-w-6xl mx-auto px-6 pt-10">
-        <div className="flex flex-wrap items-center gap-3 mb-6">
-          {(["all", "single", "project", "video", "popular"] as Kind[]).map((k) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              className={`rounded-full px-4 py-2 text-sm border ${
-                tab === k ? "border-red-400 text-white bg-red-500/20" : "border-zinc-700 text-gray-300 hover:border-red-400"
-              }`}
-            >
-              {k === "all" ? "All" : k === "project" ? "Projects" : k === "video" ? "Videos" : k === "popular" ? "Popular" : "Singles"}
-            </button>
+      {/* CURATED DISCOVERY — editorial cards; not wired to catalog data yet */}
+      <section className={`${WIDE} pt-16 sm:pt-20`}>
+        <div className="mb-8 max-w-xl">
+          <p className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.3em] text-red-400">
+            <span className="h-px w-10 bg-red-500" />
+            Discover
+          </p>
+          <h2 className="mt-3 text-3xl font-black uppercase tracking-tight sm:text-4xl">Find your way in</h2>
+          <p className="mt-2 text-gray-400">Four ways into the world of 1TakeQuan.</p>
+        </div>
+        <ul aria-label="Curated discovery" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-5">
+          {DISCOVERY.map((c, i) => (
+            <li key={c.title} className="relative aspect-[5/4] overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 sm:aspect-[4/5]">
+              <Image
+                src={c.img}
+                alt=""
+                fill
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                className={`object-cover ${c.pos}`}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/10" />
+              <span className="absolute left-4 top-4 text-sm font-bold tabular-nums tracking-widest text-red-400">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <div className="absolute inset-x-0 bottom-0 p-5">
+                <h3 className="text-2xl font-black uppercase leading-none tracking-tight">{c.title}</h3>
+                <p className="mt-2 text-sm text-gray-300">{c.desc}</p>
+              </div>
+            </li>
           ))}
-          <div className="ml-auto flex items-center gap-2">
+        </ul>
+      </section>
+
+      <section className={`${WIDE} mt-20 sm:mt-24`}>
+        <div aria-hidden className="mb-14 h-px bg-zinc-800/70" />
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.3em] text-red-400">
+              <span className="h-px w-10 bg-red-500" />
+              All Music
+            </p>
+            <h2 className="mt-3 text-3xl font-black uppercase tracking-tight sm:text-4xl">
+              {metaDone ? filtered.length : items.length}
+              {metaDone && query ? ` of ${items.length}` : ""} Tracks
+            </h2>
+          </div>
+          <div className="relative w-full sm:w-72">
+            <svg
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search title or ID..."
-              className="w-56 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-gray-500"
+              placeholder="Search tracks..."
+              className="w-full rounded-full border border-zinc-700 bg-zinc-900 py-2.5 pl-9 pr-4 text-sm text-white placeholder-gray-500 focus:border-red-500 focus:outline-none"
             />
-            <button
-              onClick={() => setLayout((l) => (l === "rows" ? "rail" : "rows"))}
-              className="rounded-full border border-zinc-700 px-4 py-2 text-sm hover:border-red-400 hover:text-red-300"
-              title="Toggle layout"
-            >
-              {layout === "rows" ? "Horizontal" : "Rows of 10"}
-            </button>
           </div>
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="text-gray-400">No results.</div>
-        ) : layout === "rows" ? (
-          <div className="space-y-4">
-            {rows.map((row, idx) => (
-              <div key={idx} className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-3">
-                {row.map((it) => (
-                  <Card key={it.key} it={it} />
-                ))}
+        {!metaDone ? (
+          <div aria-busy="true" aria-label="Loading tracks" className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 lg:gap-5">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className="animate-pulse overflow-hidden rounded-md border border-zinc-800/80 bg-zinc-900/60">
+                <div className="aspect-square bg-zinc-800/70" />
+                <div className="h-[2.6rem] px-2 py-2 sm:h-[2.9rem] lg:h-[3.4rem] lg:px-3">
+                  <div className="h-3 w-3/4 rounded bg-zinc-800" />
+                </div>
               </div>
             ))}
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-md border border-zinc-800 bg-zinc-900/40 py-16 text-center text-gray-400">
+            No tracks match &quot;{query}&quot;.
+          </div>
         ) : (
-          <Rail data={filtered} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 lg:gap-5">
+            {filtered.map((it) => (
+              <TrackCard
+                key={it.key}
+                title={titleFor(it)}
+                thumb={it.thumb}
+                onSelect={() => selectTrack(it)}
+              />
+            ))}
+          </div>
         )}
       </section>
 
-      <section className="max-w-6xl mx-auto px-6 pt-12 space-y-8">
-        <h2 className="text-2xl font-bold">Curated Collections</h2>
-        <div className="grid gap-6 lg:grid-cols-2">
-          {[
-            { title: "For New Fans", desc: "Start here — the essentials.", color: "from-red-500/30" },
-            { title: "Turn-Up Quan", desc: "High energy, stage-ready.", color: "from-orange-500/30" },
-            { title: "Pain / Late Night", desc: "Reflective, raw, 2AM vibe.", color: "from-purple-500/30" },
-            { title: "Underrated", desc: "Sleeper picks the day-ones know.", color: "from-blue-500/30" },
-          ].map((c) => (
-            <div
-              key={c.title}
-              className={`rounded-2xl border border-zinc-800 bg-gradient-to-br ${c.color} to-black p-5 shadow-lg shadow-black/30`}
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-lg font-semibold">{c.title}</div>
-                  <div className="text-sm text-gray-300 mt-1">{c.desc}</div>
-                </div>
-                <button className="text-sm text-red-300 hover:text-white">View</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="max-w-6xl mx-auto px-6 pt-12">
+      <section className={`${WIDE} pt-20`}>
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
           <h2 className="text-xl font-bold mb-2">Vote the next performance</h2>
           <p className="text-sm text-gray-300 mb-4">Pick which song you want live next.</p>
@@ -648,19 +850,30 @@ export default function MusicPage() {
       </section>
 
       {modalItem && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center" onClick={() => setModalItem(null)}>
-          <div className="bg-zinc-900 rounded-lg p-6 relative" onClick={(e) => e.stopPropagation()}>
-            <button className="absolute top-2 right-2 text-white text-2xl" onClick={() => setModalItem(null)} aria-label="Close">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          onClick={() => setModalItem(null)}
+        >
+          <div className="relative w-full max-w-[640px]" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="absolute -top-9 right-0 text-2xl leading-none text-white/80 hover:text-white"
+              onClick={() => setModalItem(null)}
+              aria-label="Close"
+            >
               &times;
             </button>
-            <iframe
-              src={`${modalItem.embed}?autoplay=1&rel=0`}
-              title={meta[modalItem.key] ?? modalItem.id}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              className="w-[480px] h-[270px] rounded"
-            />
-            <div className="mt-4 text-white text-lg font-bold">{meta[modalItem.key] ?? modalItem.id}</div>
+            <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-black shadow-2xl">
+              <iframe
+                src={`${modalItem.embed}?autoplay=1&rel=0`}
+                title={meta[modalItem.key] ?? "1TakeQuan Track"}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                className="absolute inset-0 h-full w-full"
+              />
+            </div>
+            <div className="mt-3 break-words text-base font-bold text-white sm:text-lg">
+              {meta[modalItem.key] ?? "1TakeQuan Track"}
+            </div>
           </div>
         </div>
       )}

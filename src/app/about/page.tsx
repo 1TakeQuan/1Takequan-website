@@ -22,7 +22,7 @@ He’ll talk about South Central Los Angeles, growing up in a world that forced 
   `A Self-Made Catalog
 
 Since 2019, Quan has been building something most independent artists never achieve:
-a massive and consistent catalog — over 230 songs across platforms. No shortcuts, no inflated stories, no ghost personas. Just pure work.
+a massive and consistent catalog — 293 songs across platforms. No shortcuts, no inflated stories, no ghost personas. Just pure work.
 
 He’s collaborated with some of LA’s most respected names 1TakeJay, 1TakeTeezy, 1takeOcho, Rucci, Lil Vada, Joe Moses, Kalan.FrFr, Almighty Suspect, AzChike and held his own on every record. Quan’s sound lives in the heart of West Coast energy: ratchet anthems, melodic storytelling, clever punchlines, and a tone that can flip from humorous to heartfelt in one verse.
 

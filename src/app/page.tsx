@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import SignupBar from "./components/SignupBar";
 import Gallery from "@/app/components/Gallery";
+import { TITLE_OVERRIDES } from "@/lib/music/titleOverrides";
 
 type YouTubeTrack = {
   id: string;
@@ -15,41 +16,61 @@ type YouTubeTrack = {
 };
 
 
+// Total number of 1TakeQuan tracks, as supplied by the site owner (not computed from site data).
+const KNOWN_CATALOG_TRACKS = 293;
+
+// YouTube only generates maxresdefault for some videos; for the rest it 404s (and serves a grey
+// placeholder). Try hi-res first, then fall back to hqdefault which always exists.
+function YouTubeThumb({ id, alt }: { id: string; alt: string }) {
+  const hi = `https://img.youtube.com/vi/${id}/maxresdefault.jpg`;
+  const lo = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+  const [src, setSrc] = useState(hi);
+
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      fill
+      className="object-cover group-hover:scale-110 transition duration-500"
+      unoptimized
+      onLoad={(e) => {
+        if (src === hi && e.currentTarget.naturalWidth <= 120) setSrc(lo);
+      }}
+      onError={() => {
+        if (src === hi) setSrc(lo);
+      }}
+    />
+  );
+}
+
 export default function HomePage() {
   const [latestTracks, setLatestTracks] = useState<YouTubeTrack[]>([]);
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [galleryPhotos, setGalleryPhotos] = useState<Array<{ src: string; alt: string }>>([]);
-  const [totalTracks, setTotalTracks] = useState(0);
   const [playingId, setPlayingId] = useState<string | null>(null);
 
   // Load gallery photos
   useEffect(() => {
-    const photoNumbers = [52, 51, 50, 40, 39, 32, 33, 34, 31, 28, 27, 26, 25, 24, 23, 22, 21, 37];
-    
-    const testImages = photoNumbers.map((num) => {
-      return new Promise<{ src: string; alt: string } | null>((resolve) => {
-        const img = new window.Image();
-        img.onload = () => resolve({ src: `/gallery/${num}.jpg`, alt: `Behind the scenes ${num}` });
-        img.onerror = () => resolve(null);
-        img.src = `/gallery/${num}.jpg`;
-      });
-    });
+    const photoNumbers = [52, 51, 50, 40, 39, 32, 33, 34, 31, 28, 27, 26, 25, 24, 23, 21, 37];
+    const exts = ["JPG", "jpg", "jpeg"]; // cover the mixed extensions in /public/gallery
 
-    Promise.all(testImages).then((results) => {
+    const loadWithFallback = (num: number) =>
+      new Promise<{ src: string; alt: string } | null>((resolve) => {
+        const tryExt = (idx: number) => {
+          if (idx >= exts.length) return resolve(null);
+          const src = `/gallery/${num}.${exts[idx]}`;
+          const img = new window.Image();
+          img.onload = () => resolve({ src, alt: `Behind the scenes ${num}` });
+          img.onerror = () => tryExt(idx + 1);
+          img.src = src;
+        };
+        tryExt(0);
+      });
+
+    Promise.all(photoNumbers.map(loadWithFallback)).then((results) => {
       const validPhotos = results.filter((p): p is { src: string; alt: string } => p !== null);
       setGalleryPhotos(validPhotos.slice(0, 12));
     });
-  }, []);
-
-  // Fetch total tracks count from catalog
-  useEffect(() => {
-    fetch("/api/catalog")
-      .then((r) => r.json())
-      .then((data) => {
-        const tracks = data?.tracks ?? [];
-        setTotalTracks(tracks.length);
-      })
-      .catch(() => setTotalTracks(0));
   }, []);
 
   // Load latest 3 YouTube Music tracks
@@ -78,7 +99,7 @@ export default function HomePage() {
         const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${track.id}`);
         if (res.ok) {
           const data = await res.json();
-          setMeta((prev) => ({ ...prev, [track.id]: data.title || "1TakeQuan" }));
+          setMeta((prev) => ({ ...prev, [track.id]: data.title || TITLE_OVERRIDES[track.id] || "1TakeQuan" }));
         }
       } catch (error) {
         console.error("Failed to fetch title:", error);
@@ -151,17 +172,22 @@ export default function HomePage() {
       {/* Stats */}
       <section className="py-16 bg-gradient-to-b from-black to-zinc-900">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-3 gap-3 md:gap-6">
             {[
-              { value: 0, label: "Total Plays", icon: "▶️" },
+              // TODO: bring "Total Plays" back once persistent website play tracking exists
+              // (see /api/plays — currently in-memory and never called by the UI). Do not show a
+              // placeholder 0.
               { value: "16K", label: "Instagram", icon: "📸" },
               { value: "12.1K", label: "TikTok", icon: "🎵" },
-              { value: totalTracks, label: "Tracks", icon: "💿" }
+              // Known full catalog size, supplied by the site owner. NOT derived from the site's
+              // data: /api/catalog (196 SoundCloud) and the Music page (215 YouTube) are partial,
+              // fragmented lists. Replace with a count from the consolidated master catalog once it exists.
+              { value: KNOWN_CATALOG_TRACKS, label: "Tracks", icon: "💿" }
             ].map((stat) => (
-              <div key={stat.label} className="bg-zinc-800/50 backdrop-blur p-6 md:p-8 rounded-2xl border border-zinc-700 hover:border-orange-500 transition text-center group">
-                <div className="text-4xl mb-2 group-hover:scale-110 transition">{stat.icon}</div>
-                <div className="text-3xl md:text-4xl font-bold text-orange-500 mb-2">{stat.value}</div>
-                <div className="text-gray-400 text-sm md:text-base">{stat.label}</div>
+              <div key={stat.label} className="bg-zinc-800/50 backdrop-blur p-4 md:p-8 rounded-2xl border border-zinc-700 hover:border-orange-500 transition text-center group">
+                <div className="text-3xl md:text-4xl mb-2 group-hover:scale-110 transition">{stat.icon}</div>
+                <div className="text-2xl md:text-4xl font-bold text-orange-500 mb-2">{stat.value}</div>
+                <div className="text-gray-400 text-xs md:text-base">{stat.label}</div>
               </div>
             ))}
           </div>
@@ -200,13 +226,7 @@ export default function HomePage() {
                     />
                   ) : (
                     <>
-                      <Image
-                        src={track.thumb}
-                        alt={meta[track.id] || "Track"}
-                        fill
-                        className="object-cover group-hover:scale-110 transition duration-500"
-                        unoptimized
-                      />
+                      <YouTubeThumb id={track.id} alt={meta[track.id] || "Track"} />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-300 flex items-center justify-center">
                         <button
                           onClick={() => setPlayingId(track.id)}
@@ -276,7 +296,6 @@ export default function HomePage() {
                     fill
                     className="object-cover group-hover:scale-110 transition duration-500"
                     sizes="(max-width: 768px) 33vw, (max-width: 1024px) 25vw, 16vw"
-                    unoptimized
                   />
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center">
                     <svg className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">

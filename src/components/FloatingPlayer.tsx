@@ -8,6 +8,9 @@ import type { Track } from "@/lib/types";
 
 type Size = { w: number; h: number };
 
+// The site nav is fixed and ~72px tall; the player must never sit on top of it.
+const MIN_TOP = 76;
+
 export default function FloatingPlayer() {
   const {
     currentTrack,
@@ -20,6 +23,7 @@ export default function FloatingPlayer() {
     playlist,
     currentIndex,
     setCurrentTrack,
+    setPlaylist,
   } = usePlayer();
 
   const playerRef = useRef<HTMLDivElement>(null);
@@ -31,8 +35,8 @@ export default function FloatingPlayer() {
   // ✅ start minimized on load (mobile friendly)
   const [isMinimized, setIsMinimized] = useState(true);
 
-  // ✅ start near bottom-right (better than 20,20 on phones)
-  const [position, setPosition] = useState({ x: 16, y: 16 });
+  // start docked just below the nav
+  const [position, setPosition] = useState({ x: 16, y: MIN_TOP + 4 });
   const [size, setSize] = useState<Size>({ w: 360, h: 0 });
 
   const [isDragging, setIsDragging] = useState(false);
@@ -46,7 +50,8 @@ export default function FloatingPlayer() {
       if (!raw) return;
       const parsed = JSON.parse(raw);
 
-      if (parsed?.position) setPosition(parsed.position);
+      // Older saved positions could sit on top of the nav — keep them below it.
+      if (parsed?.position) setPosition({ x: parsed.position.x, y: Math.max(parsed.position.y, MIN_TOP) });
       if (parsed?.size) setSize(parsed.size);
       if (typeof parsed?.isMinimized === "boolean") setIsMinimized(parsed.isMinimized);
     } catch {}
@@ -59,14 +64,14 @@ export default function FloatingPlayer() {
     } catch {}
   }, [position, size, isMinimized]);
 
-  // Clamp to viewport (prevents disappearing off-screen)
+  // Clamp to viewport (prevents disappearing off-screen or sliding under the nav)
   const clampToViewport = (x: number, y: number, w: number, h: number) => {
     const pad = 8;
     const maxX = Math.max(pad, window.innerWidth - w - pad);
-    const maxY = Math.max(pad, window.innerHeight - h - pad);
+    const maxY = Math.max(MIN_TOP, window.innerHeight - h - pad);
     return {
       x: Math.max(pad, Math.min(x, maxX)),
-      y: Math.max(pad, Math.min(y, maxY)),
+      y: Math.max(MIN_TOP, Math.min(y, maxY)),
     };
   };
 
@@ -91,12 +96,16 @@ export default function FloatingPlayer() {
         const minW = 260;
         const maxW = Math.min(560, window.innerWidth - 16);
         const minH = 200;
-        const maxH = Math.min(720, window.innerHeight - 16);
+        const maxH = Math.min(720, window.innerHeight - MIN_TOP - 8);
 
         const nextW = Math.max(minW, Math.min(resizeRef.current.startW + dx, maxW));
-        const nextH = Math.max(minH, Math.min(resizeRef.current.startH + dy, maxH));
-
-        setSize({ w: nextW, h: nextH });
+        if (isMinimized) {
+          // minimized is a single row, so resizing only changes its width
+          setSize((s) => ({ ...s, w: nextW }));
+        } else {
+          const nextH = Math.max(minH, Math.min(resizeRef.current.startH + dy, maxH));
+          setSize({ w: nextW, h: nextH });
+        }
       }
     };
 
@@ -113,7 +122,7 @@ export default function FloatingPlayer() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [isDragging, isResizing]);
+  }, [isDragging, isResizing, isMinimized]);
 
   // Keep it clamped when screen resizes / orientation changes
   useEffect(() => {
@@ -127,9 +136,23 @@ export default function FloatingPlayer() {
     return () => window.removeEventListener("resize", onResize);
   }, [size.w, size.h, isMinimized]);
 
+  // Re-clamp after expanding/collapsing (or first appearing) so the player never hangs off-screen
+  const hasTrack = !!currentTrack;
+  useEffect(() => {
+    if (!hasTrack) return;
+    const id = requestAnimationFrame(() => {
+      const rect = playerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPosition((p) => clampToViewport(p.x, p.y, rect.width, rect.height));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isMinimized, hasTrack]);
+
   const handlePointerDownDrag = (e: React.PointerEvent) => {
     // only drag via header handle
     if (!(e.target as HTMLElement).closest(".drag-handle")) return;
+    // buttons inside the handle keep their own click behaviour
+    if ((e.target as HTMLElement).closest("button")) return;
 
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -153,13 +176,17 @@ export default function FloatingPlayer() {
     setIsResizing(true);
     resizeRef.current = { startX: e.clientX, startY: e.clientY, startW, startH };
 
-    if (size.h === 0) setSize({ w: startW, h: startH });
+    if (!isMinimized && size.h === 0) setSize({ w: startW, h: startH });
   };
 
   const onSelectTrack = (track: Track) => {
     if (railRef.current) scrollPosRef.current = railRef.current.scrollTop;
 
-    setCurrentTrack(track);
+    // setCurrentTrack alone leaves currentIndex on the old song, so Next/Previous would jump from the
+    // wrong place. Re-selecting through setPlaylist updates the index and the track together.
+    const idx = playlist.findIndex((t) => t.id === track.id);
+    if (idx >= 0) setPlaylist(playlist, idx);
+    else setCurrentTrack(track);
 
     requestAnimationFrame(() => {
       if (railRef.current) railRef.current.scrollTop = scrollPosRef.current;
@@ -171,150 +198,193 @@ export default function FloatingPlayer() {
   // ✅ safe early return AFTER hooks
   if (!currentTrack) return null;
 
-  const minimizedH = 64;
-  const expandedH = size.h || "auto";
+  const PlayIcon = (
+    <svg className="ml-0.5 h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+  const PauseIcon = (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+    </svg>
+  );
+  const ResizeGrip = (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden>
+      <path d="M12 5L5 12M12 9l-3 3" />
+    </svg>
+  );
 
   return (
     <div
       ref={playerRef}
-      className={`fixed z-50 bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl transition-all ${
+      className={`fixed z-50 flex flex-col overflow-hidden bg-black/95 backdrop-blur-lg border border-zinc-800 rounded-2xl shadow-2xl ${
         isDragging ? "cursor-grabbing" : ""
       }`}
       style={{
         left: position.x,
         top: position.y,
         width: `min(${size.w}px, 92vw)`,
-        height: isMinimized ? minimizedH : expandedH,
+        // minimized: height comes from its single row; expanded: saved height, never taller than the space under the nav
+        height: isMinimized ? undefined : size.h || undefined,
         minWidth: 260,
-        minHeight: isMinimized ? minimizedH : 200,
+        minHeight: isMinimized ? undefined : 200,
         maxWidth: 560,
-        maxHeight: 720,
+        maxHeight: isMinimized ? undefined : `min(720px, calc(100dvh - ${MIN_TOP + 8}px))`,
         userSelect: isDragging || isResizing ? "none" : undefined,
         touchAction: "none", // key for mobile drag
       }}
       onPointerDown={handlePointerDownDrag}
     >
-      {/* Header (drag handle) */}
-      <div className="drag-handle touch-none select-none flex items-center justify-between p-3 cursor-grab active:cursor-grabbing border-b border-zinc-800">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-semibold text-white truncate">
-            {isMinimized ? currentTrack.title : "Now Playing"}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsMinimized((v) => !v)}
-            className="text-gray-400 hover:text-white transition"
-            aria-label="Toggle minimize"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d={isMinimized ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"}
-              />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Expanded */}
-      {!isMinimized && (
-        <div className="p-4 space-y-4">
-          <div className="relative aspect-square rounded-lg overflow-hidden bg-zinc-800">
-            {currentTrack.cover ? (
-              <Image src={currentTrack.cover} alt={currentTrack.title} fill className="object-cover" />
-            ) : (
-              <div className="flex items-center justify-center h-full text-zinc-500">No cover</div>
-            )}
-          </div>
-
-          <div className="text-center">
-            <h3 className="font-bold text-white truncate">{currentTrack.title}</h3>
-            <p className="text-sm text-gray-400 truncate">{currentTrack.artists?.join(", ") || "1TakeQuan"}</p>
-          </div>
-
-          <div className="flex items-center justify-center gap-4">
-            <button
-              onClick={toggleShuffle}
-              className={`${shuffle ? "text-orange-500" : "text-gray-400"} hover:text-white transition`}
-              title="Shuffle"
-            >
-              Shuffle
-            </button>
-
-            <button onClick={previous} className="text-gray-400 hover:text-white transition">
-              Prev
-            </button>
-
-            <button
-              onClick={togglePlay}
-              className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center hover:scale-110 transition shadow-lg"
-            >
-              {isPlaying ? "Pause" : "Play"}
-            </button>
-
-            <button onClick={next} className="text-gray-400 hover:text-white transition">
-              Next
-            </button>
-
-            <button
-              onClick={() => toggleFavorite(currentTrack.id, favorites, setFavorites)}
-              className={`${isFavorite ? "text-red-500" : "text-gray-400"} hover:text-red-400 transition`}
-              title="Favorite"
-            >
-              ♥
-            </button>
-          </div>
-
-          <div ref={railRef} className="max-h-40 overflow-y-auto mt-4 rounded bg-zinc-800 p-2">
-            {playlist.map((track, idx) => (
-              <button
-                key={track.id}
-                className={`w-full text-left p-2 rounded ${
-                  idx === currentIndex ? "bg-red-500/30 text-white" : "hover:bg-zinc-700 text-gray-200"
-                }`}
-                onClick={() => onSelectTrack(track)}
-              >
-                {track.title}
-              </button>
-            ))}
-          </div>
-
-          {/* Resize handle */}
-          <div
-            onPointerDown={handlePointerDownResize}
-            className="absolute right-2 bottom-2 w-6 h-6 rounded bg-white/10 hover:bg-white/20 cursor-nwse-resize"
-            aria-label="Resize player"
-            title="Resize"
-          />
-        </div>
-      )}
-
-      {/* Minimized view */}
-      {isMinimized && (
-        <div className="p-2 flex items-center gap-3">
+      {isMinimized ? (
+        /* Minimized: ONE row — play/pause, title (drag area), expand. Nothing hangs outside the border. */
+        <div className="relative flex items-center gap-3 p-2">
           <button
             onClick={togglePlay}
-            className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center flex-shrink-0"
+            aria-label={isPlaying ? "Pause" : "Play"}
+            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-red-600 text-white shadow-lg"
           >
-            {isPlaying ? "||" : "▶"}
+            {isPlaying ? PauseIcon : PlayIcon}
           </button>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-white truncate">{currentTrack.title}</div>
-            <div className="text-xs text-gray-400 truncate">{currentTrack.artists?.join(", ") || "1TakeQuan"}</div>
+
+          <div className="drag-handle min-w-0 flex-1 cursor-grab select-none py-1 active:cursor-grabbing">
+            <div className="truncate text-sm font-semibold text-white">{currentTrack.title}</div>
+            <div className="truncate text-xs text-gray-400">{currentTrack.artists?.join(", ") || "1TakeQuan"}</div>
           </div>
 
-          {/* small resize handle even when minimized */}
+          <button
+            onClick={() => setIsMinimized(false)}
+            aria-label="Expand player"
+            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-gray-300 transition hover:bg-white/10 hover:text-white"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+            </svg>
+          </button>
+
+          {/* width resize grip, tucked inside the bottom-right corner */}
           <div
             onPointerDown={handlePointerDownResize}
-            className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 cursor-nwse-resize"
+            className="absolute bottom-0.5 right-0.5 flex h-4 w-4 cursor-nwse-resize items-center justify-center text-white/30 hover:text-white/70"
             aria-label="Resize player"
             title="Resize"
-          />
+          >
+            {ResizeGrip}
+          </div>
         </div>
+      ) : (
+        <>
+          {/* Expanded header (drag handle) */}
+          <div className="drag-handle flex flex-shrink-0 cursor-grab select-none items-center justify-between border-b border-zinc-800 py-1 pl-4 pr-2 active:cursor-grabbing">
+            <span className="text-sm font-semibold text-white">Now Playing</span>
+            <button
+              onClick={() => setIsMinimized(true)}
+              aria-label="Minimize player"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-gray-300 transition hover:bg-white/10 hover:text-white"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Expanded body scrolls if the viewport is short, so controls are never pushed off-screen */}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 pb-9">
+            <div
+              className="relative mx-auto aspect-square w-full overflow-hidden rounded-lg bg-zinc-800"
+              style={{ maxWidth: "min(100%, 34dvh)" }}
+            >
+              {currentTrack.cover ? (
+                <Image src={currentTrack.cover} alt={currentTrack.title} fill className="object-cover" />
+              ) : (
+                <div className="flex h-full items-center justify-center text-zinc-500">No cover</div>
+              )}
+            </div>
+
+            <div className="text-center">
+              <h3 className="truncate font-bold text-white">{currentTrack.title}</h3>
+              <p className="truncate text-sm text-gray-400">{currentTrack.artists?.join(", ") || "1TakeQuan"}</p>
+            </div>
+
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={toggleShuffle}
+                aria-label="Shuffle"
+                aria-pressed={shuffle}
+                className={`flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/10 ${
+                  shuffle ? "text-orange-500" : "text-gray-400 hover:text-white"
+                }`}
+                title="Shuffle"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" aria-hidden>
+                  <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
+                </svg>
+              </button>
+
+              <button
+                onClick={previous}
+                aria-label="Previous track"
+                className="flex h-11 w-11 items-center justify-center rounded-full text-gray-300 transition hover:bg-white/10 hover:text-white"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M6 6h2v12H6zM9.5 12L18 18V6z" />
+                </svg>
+              </button>
+
+              <button
+                onClick={togglePlay}
+                aria-label={isPlaying ? "Pause" : "Play"}
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-red-600 text-white shadow-lg transition hover:scale-105"
+              >
+                {isPlaying ? PauseIcon : PlayIcon}
+              </button>
+
+              <button
+                onClick={next}
+                aria-label="Next track"
+                className="flex h-11 w-11 items-center justify-center rounded-full text-gray-300 transition hover:bg-white/10 hover:text-white"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z" />
+                </svg>
+              </button>
+
+              <button
+                onClick={() => toggleFavorite(currentTrack.id, favorites, setFavorites)}
+                aria-label="Favorite"
+                className={`flex h-11 w-11 items-center justify-center rounded-full text-lg transition hover:bg-white/10 ${
+                  isFavorite ? "text-red-500" : "text-gray-400 hover:text-red-400"
+                }`}
+                title="Favorite"
+              >
+                ♥
+              </button>
+            </div>
+
+            <div ref={railRef} className="max-h-40 overflow-y-auto rounded bg-zinc-800 p-2">
+              {playlist.map((track, idx) => (
+                <button
+                  key={track.id}
+                  className={`w-full rounded p-2 text-left ${
+                    idx === currentIndex ? "bg-red-500/30 text-white" : "text-gray-200 hover:bg-zinc-700"
+                  }`}
+                  onClick={() => onSelectTrack(track)}
+                >
+                  {track.title}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Resize handle (inside the border, bottom-right) */}
+          <div
+            onPointerDown={handlePointerDownResize}
+            className="absolute bottom-1.5 right-1.5 flex h-6 w-6 cursor-nwse-resize items-center justify-center rounded bg-white/10 text-white/60 hover:bg-white/20"
+            aria-label="Resize player"
+            title="Resize"
+          >
+            {ResizeGrip}
+          </div>
+        </>
       )}
     </div>
   );

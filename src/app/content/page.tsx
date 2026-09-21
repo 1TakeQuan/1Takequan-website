@@ -32,6 +32,12 @@ function toEmbedUrl(url: string) {
   return url;
 }
 
+// Video ID for grid thumbnails (works for youtu.be and /shorts/ links).
+function youTubeId(url: string) {
+  const m = url.match(/(?:youtu\.be\/|youtube\.com\/shorts\/|[?&]v=)([A-Za-z0-9_-]{6,})/);
+  return m ? m[1] : null;
+}
+
 export default function ContentPage() {
   const [selectedItem, setSelectedItem] = useState<ContentItem | null>(null);
   const [shuffledContent, setShuffledContent] = useState<ContentItem[]>([]);
@@ -160,7 +166,7 @@ export default function ContentPage() {
             {/* Media */}
             <div className="relative flex-1 bg-black rounded-lg overflow-hidden">
               {selectedItem.type === "photo" ? (
-                <Image src={selectedItem.src} alt={selectedItem.alt} fill className="object-contain" unoptimized />
+                <Image src={selectedItem.src} alt={selectedItem.alt} fill sizes="(max-width: 1024px) 100vw, 70vw" className="object-contain" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <iframe
@@ -300,15 +306,17 @@ export default function ContentPage() {
                     fill
                     className="object-cover group-hover:scale-110 transition duration-500"
                     sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                    unoptimized
                   />
                 ) : (
-                  <iframe
-                    src={toEmbedUrl(item.src)}
-                    title="YouTube video"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="w-full h-full rounded shadow"
+                  // Thumbnail instead of a live iframe: 60 embedded players made this page very heavy.
+                  // The video still plays in the modal on click.
+                  <Image
+                    src={`https://img.youtube.com/vi/${youTubeId(item.src) ?? ""}/hqdefault.jpg`}
+                    alt={item.alt}
+                    fill
+                    unoptimized
+                    className="object-cover group-hover:scale-110 transition duration-500"
+                    sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
                   />
                 )}
                 {/* Video Play Icon */}

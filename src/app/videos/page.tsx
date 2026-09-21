@@ -2,8 +2,9 @@
 
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import VideoUploader from "@/app/components/VideoUploader";
+import { TITLE_OVERRIDES } from "@/lib/music/titleOverrides";
 
 const youtubeLinks = [
   "https://youtu.be/5wQHLGZhcLo?si=_gNnFO0x0db52wWa",
@@ -79,6 +80,40 @@ export default function VideosPage() {
   }, []);
 
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [titles, setTitles] = useState<Record<string, string>>({});
+
+  // Titles come from YouTube's public oEmbed (via noembed), same approach as the Music page.
+  // Cards show a neutral label until a title arrives, and keep it if the lookup fails.
+  useEffect(() => {
+    let cancelled = false;
+    const BATCH = 10;
+    (async () => {
+      for (let i = 0; i < items.length; i += BATCH) {
+        const pairs = await Promise.all(
+          items.slice(i, i + BATCH).map(async (v) => {
+            try {
+              const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${v.id}`)}`);
+              if (!res.ok) return null;
+              const data = (await res.json()) as { title?: string };
+              return data.title ? ([v.id, data.title] as const) : null;
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (cancelled) return;
+        setTitles((prev) => {
+          const next = { ...prev };
+          for (const p of pairs) if (p) next[p[0]] = p[1];
+          return next;
+        });
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
 
   return (
     <main className="min-h-screen bg-black text-white pt-24 pb-16 px-6">
@@ -100,7 +135,7 @@ export default function VideosPage() {
                   {isPlaying ? (
                     <iframe
                       src={`${v.embed}?autoplay=1&rel=0`}
-                      title={v.id}
+                      title={titles[v.id] ?? TITLE_OVERRIDES[v.id] ?? "1TakeQuan video"}
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                       allowFullScreen
                       className="w-full h-full"
@@ -109,7 +144,7 @@ export default function VideosPage() {
                     <>
                       <Image
                         src={v.thumb}
-                        alt={`YouTube video ${v.id}`}
+                        alt={titles[v.id] ?? TITLE_OVERRIDES[v.id] ?? "1TakeQuan video"}
                         fill
                         className="object-cover"
                         unoptimized
@@ -129,7 +164,7 @@ export default function VideosPage() {
                   )}
                 </div>
                 <div className="px-4 py-3 flex items-center justify-between">
-                  <span className="text-xs text-gray-400">YouTube</span>
+                  <span className="mr-3 min-w-0 flex-1 truncate text-sm text-gray-200" title={titles[v.id] ?? TITLE_OVERRIDES[v.id]}>{titles[v.id] ?? TITLE_OVERRIDES[v.id] ?? "1TakeQuan video"}</span>
                   <div className="flex gap-2">
                     {isPlaying ? (
                       <button
@@ -164,10 +199,6 @@ export default function VideosPage() {
               </div>
             );
           })}
-        </div>
-        <div className="container mx-auto px-4 py-8">
-          <h1 className="text-3xl font-bold mb-6">Music Videos</h1>
-          <p className="text-gray-400">Video content coming soon...</p>
         </div>
       </div>
     </main>
