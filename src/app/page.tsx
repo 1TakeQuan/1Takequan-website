@@ -1,362 +1,869 @@
 "use client";
 
-import { useEffect, useState } from "react";
+// PHASE 3 · STAGE A — static visual skeleton of the approved homepage blueprint.
+// PHASE 3 · STAGE A.1 — adds the first interaction layer: a fullscreen media viewer for the
+// standalone photography/prints (Coverage, the Tape artwork, the Room's studio photos, Break).
+// Music playback, playlist seeding, video playback and signup submission are still not
+// implemented — play controls and the signup form remain visual placeholders. Styles live in
+// globals.css under `.hp-*`.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import SignupBar from "./components/SignupBar";
-import Gallery from "@/app/components/Gallery";
-import { TITLE_OVERRIDES } from "@/lib/music/titleOverrides";
+import { usePlayer } from "@/contexts/PlayerContext";
+import type { Track } from "@/lib/types";
 
-type YouTubeTrack = {
-  id: string;
-  url: string;
-  embed: string;
-  thumb: string;
-  title?: string;
-};
-
-
-// Total number of 1TakeQuan tracks, as supplied by the site owner (not computed from site data).
-const KNOWN_CATALOG_TRACKS = 293;
-
-// YouTube only generates maxresdefault for some videos; for the rest it 404s (and serves a grey
-// placeholder). Try hi-res first, then fall back to hqdefault which always exists.
-function YouTubeThumb({ id, alt }: { id: string; alt: string }) {
-  const hi = `https://img.youtube.com/vi/${id}/maxresdefault.jpg`;
-  const lo = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-  const [src, setSrc] = useState(hi);
-
+// YouTube only generates maxresdefault for some videos (others 404 with a grey placeholder).
+// Try hi-res first when asked, then fall back to hqdefault, which always exists.
+function YT({ id, alt, hi = false, sizes, className }: { id: string; alt: string; hi?: boolean; sizes: string; className?: string }) {
+  const hiUrl = `https://img.youtube.com/vi/${id}/maxresdefault.jpg`;
+  const loUrl = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+  const [src, setSrc] = useState(hi ? hiUrl : loUrl);
   return (
     <Image
       src={src}
       alt={alt}
       fill
-      className="object-cover group-hover:scale-110 transition duration-500"
       unoptimized
+      sizes={sizes}
+      className={`object-cover ${className ?? ""}`}
       onLoad={(e) => {
-        if (src === hi && e.currentTarget.naturalWidth <= 120) setSrc(lo);
+        if (src === hiUrl && e.currentTarget.naturalWidth <= 120) setSrc(loUrl);
       }}
       onError={() => {
-        if (src === hi) setSrc(lo);
+        if (src === hiUrl) setSrc(loUrl);
       }}
     />
   );
 }
 
-export default function HomePage() {
-  const [latestTracks, setLatestTracks] = useState<YouTubeTrack[]>([]);
-  const [meta, setMeta] = useState<Record<string, string>>({});
-  const [galleryPhotos, setGalleryPhotos] = useState<Array<{ src: string; alt: string }>>([]);
-  const [playingId, setPlayingId] = useState<string | null>(null);
+const PlayGlyph = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M8 5v14l11-7z" />
+  </svg>
+);
 
-  // Load gallery photos
+const ExpandGlyph = () => (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" aria-hidden="true">
+    <path d="M1.5 5.5V2c0-.28.22-.5.5-.5h3.5M14.5 5.5V2c0-.28-.22-.5-.5-.5h-3.5M1.5 10.5V14c0 .28.22.5.5.5h3.5M14.5 10.5V14c0 .28-.22.5-.5.5h-3.5" />
+  </svg>
+);
+
+const CloseGlyph = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+
+const ArrowGlyph = ({ dir }: { dir: "left" | "right" }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={dir === "left" ? "M15 5l-7 7 7 7" : "M9 5l7 7-7 7"} />
+  </svg>
+);
+
+const PauseGlyph = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+  </svg>
+);
+
+// Stage B: the three Tape releases, playable through the existing global player. Real IDs
+// already verified present in the Music page's 215-track catalog (see report). Cover uses
+// hqdefault to match exactly what the Music page's own Track objects use for these same IDs.
+const TAPE_TRACKS: Track[] = [
+  { id: "i_a2LhIVhJk", title: "Fake Freaky Remix", artists: ["1TakeQuan"], cover: "https://img.youtube.com/vi/i_a2LhIVhJk/hqdefault.jpg", sources: { youtube: "https://www.youtube.com/watch?v=i_a2LhIVhJk" } },
+  { id: "fClzw0x4WQQ", title: "Jump In", artists: ["1TakeQuan"], cover: "https://img.youtube.com/vi/fClzw0x4WQQ/hqdefault.jpg", sources: { youtube: "https://www.youtube.com/watch?v=fClzw0x4WQQ" } },
+  { id: "9fo8k5-EkkA", title: "Plumber", artists: ["1TakeQuan"], cover: "https://img.youtube.com/vi/9fo8k5-EkkA/hqdefault.jpg", sources: { youtube: "https://www.youtube.com/watch?v=9fo8k5-EkkA" } },
+];
+
+// Floors seconds; never shows hours; safe on NaN/negative/undefined.
+function formatClock(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// The single SC03 production label — travels to whichever Tape print is the active global
+// track (or the neutral 00:00 at the lead print when none is). Exactly one instance is ever
+// rendered; React mounting it in a new spot on ownership change is what gives it the brief
+// reposition/fade called for in the brief (respects prefers-reduced-motion via CSS).
+function TapeClock({ seconds }: { seconds: number }) {
+  return (
+    <span className="hp-label hp-mono hp-tp-clock">
+      TAKE 01 · SC 03 · {formatClock(seconds)}
+    </span>
+  );
+}
+
+// A single fullscreen-viewable asset.
+type ViewerItem = { src: string; alt: string; label: string; fallback?: string };
+
+// Small transparent overlay that sits on top of a photo/print and opens it in the fullscreen
+// viewer. It never intercepts a real play control — see the z-index notes in globals.css.
+function ViewTrigger({ label, onOpen }: { label: string; onOpen: (el: HTMLElement) => void }) {
+  return (
+    <button
+      type="button"
+      className="hp-view"
+      aria-label={`View ${label} fullscreen`}
+      onClick={(e) => onOpen(e.currentTarget)}
+    >
+      <span className="hp-view-icon" aria-hidden="true">
+        <ExpandGlyph />
+      </span>
+    </button>
+  );
+}
+
+// One reusable fullscreen media viewer for the homepage. Hard cut open/close (no motion to
+// reduce). Locks background scroll while open and returns it exactly where it was on close.
+function Lightbox({
+  items,
+  index,
+  onClose,
+  onPrev,
+  onNext,
+}: {
+  items: ViewerItem[];
+  index: number;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const item = items[index];
+  const [src, setSrc] = useState(item.src);
+
   useEffect(() => {
-    const photoNumbers = [52, 51, 50, 40, 39, 32, 33, 34, 31, 28, 27, 26, 25, 24, 23, 21, 37];
-    const exts = ["JPG", "jpg", "jpeg"]; // cover the mixed extensions in /public/gallery
+    setSrc(item.src);
+  }, [item.src]);
 
-    const loadWithFallback = (num: number) =>
-      new Promise<{ src: string; alt: string } | null>((resolve) => {
-        const tryExt = (idx: number) => {
-          if (idx >= exts.length) return resolve(null);
-          const src = `/gallery/${num}.${exts[idx]}`;
-          const img = new window.Image();
-          img.onload = () => resolve({ src, alt: `Behind the scenes ${num}` });
-          img.onerror = () => tryExt(idx + 1);
-          img.src = src;
-        };
-        tryExt(0);
-      });
-
-    Promise.all(photoNumbers.map(loadWithFallback)).then((results) => {
-      const validPhotos = results.filter((p): p is { src: string; alt: string } => p !== null);
-      setGalleryPhotos(validPhotos.slice(0, 12));
-    });
+  useEffect(() => {
+    closeRef.current?.focus();
+    // Lock scroll without disturbing position: overflow:hidden on <html> makes some browsers
+    // clamp/re-clamp scrollTop on unlock, so pin the actual scroll offset with position:fixed
+    // instead and put it back exactly on close.
+    const y = window.scrollY;
+    const body = document.body.style;
+    const prev = { position: body.position, top: body.top, left: body.left, right: body.right, width: body.width };
+    body.position = "fixed";
+    body.top = `-${y}px`;
+    body.left = "0";
+    body.right = "0";
+    body.width = "100%";
+    const preventScroll = (e: TouchEvent) => e.preventDefault();
+    document.addEventListener("touchmove", preventScroll, { passive: false });
+    return () => {
+      body.position = prev.position;
+      body.top = prev.top;
+      body.left = prev.left;
+      body.right = prev.right;
+      body.width = prev.width;
+      window.scrollTo(0, y);
+      document.removeEventListener("touchmove", preventScroll);
+    };
   }, []);
 
-  // Load latest 3 YouTube Music tracks
   useEffect(() => {
-    const youtubeLinks = [
-      "https://music.youtube.com/watch?v=fClzw0x4WQQ&si=EGXALCLhqppbNbmf",
-      "https://music.youtube.com/watch?v=9fo8k5-EkkA&si=BCI_oOMJtKrYXkCR",
-      "https://music.youtube.com/watch?v=vnnwnhSpthw&si=1AdOVFAkePoeuzX6",
-    ];
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && items.length > 1) onPrev();
+      else if (e.key === "ArrowRight" && items.length > 1) onNext();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, onPrev, onNext, items.length]);
 
-    const tracks: YouTubeTrack[] = youtubeLinks.map((url) => {
-      const videoId = new URL(url).searchParams.get("v") || "";
-      return {
-        id: videoId,
-        url: url,
-        embed: `https://www.youtube-nocookie.com/embed/${videoId}`,
-        thumb: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-      };
-    });
-
-    setLatestTracks(tracks);
-
-    // Fetch titles from YouTube
-    tracks.forEach(async (track) => {
-      try {
-        const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${track.id}`);
-        if (res.ok) {
-          const data = await res.json();
-          setMeta((prev) => ({ ...prev, [track.id]: data.title || TITLE_OVERRIDES[track.id] || "1TakeQuan" }));
-        }
-      } catch (error) {
-        console.error("Failed to fetch title:", error);
-      }
-    });
-  }, []);
+  const touchRef = useRef<{ x: number; y: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchRef.current;
+    touchRef.current = null;
+    if (!start || items.length < 2) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy)) {
+      if (dx < 0) onNext();
+      else onPrev();
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      {/* Hero Section */}
-      <section className="relative h-screen flex items-center justify-center overflow-hidden">
-        <div className="absolute inset-0">
-          <Image
-            key={0}
-            src="/gallery/28.JPG"
-            alt="1TakeQuan"
-            fill
-            className="object-cover opacity-60 transition-opacity duration-1000"
-            priority
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/50 to-black" />
-        </div>
+    <div
+      className="hp-lb"
+      role="dialog"
+      aria-modal="true"
+      aria-label={item.label}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
+      <button type="button" ref={closeRef} className="hp-lb-close" onClick={onClose} aria-label="Close">
+        <CloseGlyph />
+      </button>
 
-        <div className="relative z-20 text-center px-6 max-w-4xl">
-          <h1 className="text-6xl md:text-8xl font-bold mb-6 bg-gradient-to-r from-orange-500 to-red-600 bg-clip-text text-transparent animate-fade-in">
-            1TakeQuan
-          </h1>
-          <p className="text-xl md:text-2xl text-gray-300 mb-8 max-w-2xl mx-auto">
-            Official music, videos, and exclusive content from the underground king
-          </p>
-          
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href="/music"
-              className="px-8 py-4 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 rounded-full font-bold text-lg transition flex items-center justify-center gap-2 shadow-lg hover:shadow-orange-500/50"
-            >
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
-              </svg>
-              Listen Now
-            </Link>
-            <Link
-              href="/videos"
-              className="px-8 py-4 bg-zinc-800/80 hover:bg-zinc-700/80 rounded-full font-bold text-lg transition backdrop-blur-sm flex items-center justify-center gap-2 border border-zinc-700 hover:border-orange-500"
-            >
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
-              </svg>
-              Watch Videos
-            </Link>
-            <Link
-              href="/content"
-              className="px-8 py-4 bg-zinc-800/80 hover:bg-zinc-700/80 rounded-full font-bold text-lg transition backdrop-blur-sm flex items-center justify-center gap-2 border border-zinc-700 hover:border-purple-500"
-            >
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-              </svg>
-              View Gallery
-            </Link>
+      {items.length > 1 && (
+        <button type="button" className="hp-lb-nav hp-lb-prev" onClick={onPrev} aria-label="Previous">
+          <ArrowGlyph dir="left" />
+        </button>
+      )}
+
+      {/* eslint-disable-next-line @next/next/no-img-element -- fullscreen viewer needs the raw
+          source at natural size/aspect with no crop; next/image's fill+contain forces a sized
+          box we don't have here. */}
+      <img
+        src={src}
+        alt={item.alt}
+        className="hp-lb-img"
+        onError={() => {
+          if (item.fallback && src !== item.fallback) setSrc(item.fallback);
+        }}
+      />
+
+      {items.length > 1 && (
+        <button type="button" className="hp-lb-nav hp-lb-next" onClick={onNext} aria-label="Next">
+          <ArrowGlyph dir="right" />
+        </button>
+      )}
+
+      <p className="hp-lb-cap hp-mono">
+        {item.label}
+        {items.length > 1 && (
+          <span className="hp-lb-count">
+            {" "}
+            · {index + 1}/{items.length}
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+// The approved curated ten-video set (all exist on /videos). Stage A shows stills only — video
+// playback is a later stage, so the Reel is deliberately excluded from the fullscreen viewer.
+const REEL = [
+  { id: "5wQHLGZhcLo", title: "Super ( Performance video w/ Lyrics )", name: "Super", kind: "Performance video w/ lyrics" },
+  { id: "U1xZgvUJb14", title: "Buss it ( Performance video w/ lyrics )", name: "Buss it", kind: "Performance video w/ lyrics" },
+  { id: "7dFI42Qh75o", title: "Anonymous ( Official Music Video )", name: "Anonymous", kind: "Official music video" },
+  { id: "skR9m1yYPVk", title: "1TakeQuan x Bossmann - Potion Official Music Video", name: "Potion", kind: "Official music video" },
+  { id: "SfkGri-7488", title: "1TakeQuan - 99 Problems Official Music Video", name: "99 Problems", kind: "Official music video" },
+  { id: "1AUJPZxANyA", title: "1TakeQuan & Rucci - I'm Tripping Official Music Video", name: "I'm Tripping", kind: "Official music video" },
+  { id: "dF6b3LyXoOg", title: "1TakeQuan - Swang Official Music Video Feat. Chef Boy & LeeLeeBabii", name: "Swang", kind: "Official music video" },
+  { id: "aiiy2Yutx4I", title: "1TakeQuan - Take You Home Official Music Video ft. Kalan.FrFr & 1TakeJay", name: "Take You Home", kind: "Official music video" },
+  { id: "tz1bAqyf8Mc", title: "1TakeQuan - Jerry Rice Official Music Video", name: "Jerry Rice", kind: "Official music video" },
+  { id: "PUqhLXedAFc", title: "1TakeQuan - Fresh Prince Feat. Rucci Official Music Video", name: "Fresh Prince", kind: "Official music video" },
+];
+
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+// The Reel — the homepage's own small, self-contained video browser. Selecting a thumbnail
+// never plays anything; only the large frame's own Play control does, as a single on-demand
+// iframe.
+//
+// Stage B audio coordination (the only two rules needed — see the report):
+//   MUSIC START -> Reel playback off   (handled here, in reverse: pressing Reel Play pauses music)
+//   REEL START  -> global music paused (handled here directly via usePlayer())
+// `stopRef` is the smallest possible homepage-local channel for the other direction: it lets the
+// Tape's own play controls (in HomePage) tell this component to drop its iframe before starting
+// or resuming a song, without lifting Reel's selection/playing state out of this component or
+// building any new shared state manager.
+function ReelSection({ stopRef }: { stopRef: React.MutableRefObject<() => void> }) {
+  const { isPlaying: musicPlaying, pause: pauseMusic } = usePlayer();
+  const [selected, setSelected] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const stripRef = useRef<HTMLUListElement>(null);
+  const video = REEL[selected];
+  const n = String(selected + 1).padStart(2, "0");
+
+  useEffect(() => {
+    stopRef.current = () => setPlaying(false);
+  }, [stopRef]);
+
+  const select = (i: number, el: HTMLElement) => {
+    setSelected(i);
+    setPlaying(false);
+    el.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", inline: "center", block: "nearest" });
+  };
+
+  // Rule: starting a Reel video pauses global music first, at its real position (never reset).
+  const startPlayback = () => {
+    if (musicPlaying) pauseMusic();
+    setPlaying(true);
+  };
+
+  const scrollStrip = (dir: 1 | -1) => {
+    const el = stripRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  };
+
+  // Lets a plain vertical wheel gesture move the filmstrip — but only while it still has
+  // somewhere to go in that direction, so normal page scroll takes over at either end instead
+  // of being hijacked. A genuinely horizontal gesture (trackpad/shift+wheel) is left to the
+  // browser's native scrolling.
+  const onStripWheel = (e: React.WheelEvent<HTMLUListElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollWidth <= el.clientWidth) return;
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const goingLeft = e.deltaY < 0;
+    const atStart = el.scrollLeft <= 0;
+    const atEnd = el.scrollLeft >= el.scrollWidth - el.clientWidth - 1;
+    if ((goingLeft && atStart) || (!goingLeft && atEnd)) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaY;
+  };
+
+  return (
+    <section className="hp-reel" aria-label="The Reel">
+      <div className="hp-wrap">
+        <div className="hp-reel-c">
+          <h2 className="sr-only">The Reel</h2>
+
+          <div className="hp-reel-frame">
+            <div className="hp-img">
+              {playing ? (
+                <iframe
+                  key={video.id}
+                  src={`https://www.youtube.com/embed/${video.id}?autoplay=1&rel=0`}
+                  title={video.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  className="hp-reel-iframe"
+                />
+              ) : (
+                <>
+                  <YT key={video.id} id={video.id} alt={video.title} hi sizes="(min-width:1024px) 66vw, 100vw" />
+                  <button type="button" className="hp-play hp-play--paper hp-reel-play" onClick={startPlayback} aria-label={`Play ${video.name}`}>
+                    <PlayGlyph />
+                  </button>
+                </>
+              )}
+            </div>
+            <span className="hp-label hp-mono">
+              <span className="hidden md:inline">TAKE 01 · SC 05 · VIDEO {n} / 10</span>
+              <span className="md:hidden">TAKE 01 · SC 05 · {n}/10</span>
+            </span>
           </div>
-        </div>
 
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
-          <svg className="w-6 h-6 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-          </svg>
-        </div>
-      </section>
-
-      {/* Stats */}
-      <section className="py-16 bg-gradient-to-b from-black to-zinc-900">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="grid grid-cols-3 gap-3 md:gap-6">
-            {[
-              // TODO: bring "Total Plays" back once persistent website play tracking exists
-              // (see /api/plays — currently in-memory and never called by the UI). Do not show a
-              // placeholder 0.
-              { value: "16K", label: "Instagram", icon: "📸" },
-              { value: "12.1K", label: "TikTok", icon: "🎵" },
-              // Known full catalog size, supplied by the site owner. NOT derived from the site's
-              // data: /api/catalog (196 SoundCloud) and the Music page (215 YouTube) are partial,
-              // fragmented lists. Replace with a count from the consolidated master catalog once it exists.
-              { value: KNOWN_CATALOG_TRACKS, label: "Tracks", icon: "💿" }
-            ].map((stat) => (
-              <div key={stat.label} className="bg-zinc-800/50 backdrop-blur p-4 md:p-8 rounded-2xl border border-zinc-700 hover:border-orange-500 transition text-center group">
-                <div className="text-3xl md:text-4xl mb-2 group-hover:scale-110 transition">{stat.icon}</div>
-                <div className="text-2xl md:text-4xl font-bold text-orange-500 mb-2">{stat.value}</div>
-                <div className="text-gray-400 text-xs md:text-base">{stat.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Latest Releases - 3 YouTube Music Tracks */}
-      <section className="py-20 bg-zinc-900">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex items-center justify-between mb-12">
-            <h2 className="text-4xl font-bold flex items-center gap-3">
-              <span className="text-5xl">🆕</span> Latest Releases
-            </h2>
-            <Link href="/music" className="text-orange-500 hover:text-orange-400 font-semibold flex items-center gap-2 transition group">
-              View All
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </Link>
+          <div className="hp-reel-side">
+            <p className="hp-mono hp-muted">Video {n} / 10</p>
+            <h3 className="hp-display">{video.name}</h3>
+            <p className="hp-mono hp-muted" style={{ marginTop: 10 }}>{video.kind}</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {latestTracks.map((track) => (
-              <div
-                key={track.id}
-                className="group bg-black rounded-2xl overflow-hidden border border-zinc-800 hover:border-orange-500 transition-all hover:scale-105 hover:shadow-xl hover:shadow-orange-500/20"
-              >
-                <div className="relative aspect-video bg-black">
-                  {playingId === track.id ? (
-                    <iframe
-                      src={`${track.embed}?autoplay=1&rel=0`}
-                      title={meta[track.id] || "Track"}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      className="w-full h-full"
-                    />
-                  ) : (
-                    <>
-                      <YouTubeThumb id={track.id} alt={meta[track.id] || "Track"} />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all duration-300 flex items-center justify-center">
-                        <button
-                          onClick={() => setPlayingId(track.id)}
-                          className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100 transition-all duration-300 shadow-2xl"
-                        >
-                          <svg className="w-10 h-10 ml-1" fill="white" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div className="p-5">
-                  <h3 className="font-bold text-lg mb-1 truncate group-hover:text-orange-500 transition">
-                    {meta[track.id] || "Loading..."}
-                  </h3>
-                  <a
-                    href={`https://www.youtube.com/watch?v=${track.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-orange-400 hover:text-orange-300 inline-flex items-center gap-1"
+          <div className="hp-reel-stripwrap">
+            <button type="button" className="hp-reel-scroll hp-reel-scroll--l" aria-label="Scroll filmstrip left" onClick={() => scrollStrip(-1)}>
+              <ArrowGlyph dir="left" />
+            </button>
+            <ul ref={stripRef} className="hp-reel-strip" aria-label="Curated videos" onWheel={onStripWheel}>
+              {REEL.map((v, i) => (
+                <li key={v.id}>
+                  <button
+                    type="button"
+                    className="hp-thumb"
+                    aria-current={i === selected ? "true" : undefined}
+                    aria-label={`Select video ${i + 1} of 10: ${v.name}`}
+                    onClick={(e) => select(i, e.currentTarget)}
                   >
-                    Listen on YouTube Music
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Behind The Scenes / Content Preview */}
-      <section className="py-20 bg-black">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex items-center justify-between mb-12">
-            <h2 className="text-4xl font-bold flex items-center gap-3">
-              <span className="text-5xl">📸</span> Behind The Scenes
-            </h2>
-            <Link
-              href="/content"
-              className="text-orange-500 hover:text-orange-400 font-semibold flex items-center gap-2 transition group"
-            >
-              View All Content
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </Link>
-          </div>
-          
-          {galleryPhotos.length === 0 ? (
-            <div className="text-center py-12 text-gray-400">Loading gallery...</div>
-          ) : (
-            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {galleryPhotos.map((photo, idx) => (
-                <Link
-                  key={idx}
-                  href="/content"
-                  className="group relative aspect-square overflow-hidden rounded-xl border-2 border-zinc-800 hover:border-orange-500 transition-all hover:scale-105"
-                >
-                  <Image
-                    src={photo.src}
-                    alt={photo.alt}
-                    fill
-                    className="object-cover group-hover:scale-110 transition duration-500"
-                    sizes="(max-width: 768px) 33vw, (max-width: 1024px) 25vw, 16vw"
-                  />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center">
-                    <svg className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  </div>
-                </Link>
+                    <YT id={v.id} alt={v.title} sizes="136px" />
+                  </button>
+                </li>
               ))}
-            </div>
-          )}
+            </ul>
+            <button type="button" className="hp-reel-scroll hp-reel-scroll--r" aria-label="Scroll filmstrip right" onClick={() => scrollStrip(1)}>
+              <ArrowGlyph dir="right" />
+            </button>
+          </div>
+
+          <p className="hp-reel-route">
+            <Link href="/videos" className="hp-route">
+              All 49 videos →
+            </Link>
+          </p>
         </div>
+      </div>
+    </section>
+  );
+}
+
+const BREAK_FRAMES = [
+  { n: 120, file: "120.jpeg", alt: "1TakeQuan posing in a striped jersey and sunglasses" },
+  { n: 121, file: "121.jpeg", alt: "1TakeQuan posing in a striped jersey, full length" },
+  { n: 122, file: "122.jpeg", alt: "Crew selfie in an LED-lit room" },
+  { n: 123, file: "123.jpeg", alt: "Crew selfie in an LED-lit room, closer" },
+  { n: 124, file: "124.jpeg", alt: "Crew selfie in an LED-lit room, closest" },
+];
+
+// GROUP 1 — Coverage. Sequence order follows the intended visual/story order, not DOM overlap.
+const COVERAGE_ITEMS: ViewerItem[] = [
+  { src: "/gallery/28.JPG", alt: "1TakeQuan on stage with a microphone in front of a crowd", label: "Frame 28" },
+  { src: "/gallery/51.JPG", alt: "1TakeQuan in a mustard hoodie with the character logo, blue lamp behind", label: "Frame 51" },
+  { src: "/gallery/35.JPG", alt: "1TakeQuan laughing in a cream jacket at night", label: "Frame 35" },
+  { src: "/gallery/32.JPG", alt: "Fans reaching toward 1TakeQuan at the front of the crowd", label: "Frame 32" },
+  { src: "/gallery/9.jpeg", alt: "1TakeQuan in the studio booth, seen from behind in blue light", label: "Frame 09" },
+  { src: "/gallery/40.JPG", alt: "1TakeQuan in a white studio with cash on the floor", label: "Frame 40" },
+  { src: "/gallery/37.jpeg", alt: "A dense crowd of fans holding up phones", label: "Frame 37" },
+];
+
+// GROUP 2 — The Tape. Artwork only; the play controls stay reserved for a later stage and never
+// open this viewer (see the z-index notes in globals.css).
+const TAPE_ITEMS: ViewerItem[] = [
+  {
+    src: "https://img.youtube.com/vi/i_a2LhIVhJk/maxresdefault.jpg",
+    fallback: "https://img.youtube.com/vi/i_a2LhIVhJk/hqdefault.jpg",
+    alt: "Fake Freaky Remix — official music video artwork",
+    label: "Fake Freaky Remix",
+  },
+  {
+    src: "https://img.youtube.com/vi/fClzw0x4WQQ/maxresdefault.jpg",
+    fallback: "https://img.youtube.com/vi/fClzw0x4WQQ/hqdefault.jpg",
+    alt: "Jump In — official music video artwork",
+    label: "Jump In",
+  },
+  {
+    src: "https://img.youtube.com/vi/9fo8k5-EkkA/hqdefault.jpg",
+    alt: "Plumber — official music video artwork",
+    label: "Plumber",
+  },
+];
+
+// GROUP 4 — Break, in filename order.
+const BREAK_ITEMS: ViewerItem[] = BREAK_FRAMES.map((f) => ({
+  src: `/gallery/${f.file}`,
+  alt: f.alt,
+  label: `Frame ${f.n}`,
+}));
+
+// GROUP 3 — The Room. 17.JPG only exists in the composition at 1024px+; below that it's not
+// rendered at all (not just hidden), so it's excluded from the sequence rather than opening onto
+// an asset the visitor never saw.
+const ROOM_MAIN: ViewerItem = { src: "/gallery/1.jpeg", alt: "1TakeQuan in profile, singing into a studio microphone, black and white", label: "In the room" };
+const ROOM_29: ViewerItem = { src: "/gallery/29.JPG", alt: "A studio mixing session at the console", label: "In the room" };
+const ROOM_17: ViewerItem = { src: "/gallery/17.JPG", alt: "Two people in a blue-lit studio", label: "In the room" };
+
+function useIsAtLeast(minWidthPx: number) {
+  const [match, setMatch] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${minWidthPx}px)`);
+    const update = () => setMatch(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, [minWidthPx]);
+  return match;
+}
+
+const NAV = [
+  { href: "/", label: "Home" },
+  { href: "/music", label: "Music" },
+  { href: "/videos", label: "Videos" },
+  { href: "/games", label: "Games" },
+  { href: "/content", label: "Gallery" },
+  { href: "/contact", label: "Contact" },
+  { href: "/about", label: "About" },
+];
+
+const SOCIAL = [
+  { href: "https://soundcloud.com/1takequan", label: "SoundCloud" },
+  { href: "https://youtube.com/@1takequan", label: "YouTube" },
+  { href: "https://instagram.com/1takequan", label: "Instagram" },
+  { href: "https://tiktok.com/@1takequan", label: "TikTok" },
+];
+
+export default function HomePage() {
+  const [viewer, setViewer] = useState<{ items: ViewerItem[]; index: number } | null>(null);
+  const lastTrigger = useRef<HTMLElement | null>(null);
+  const isRoomWide = useIsAtLeast(1024);
+  const roomItems = useMemo(() => (isRoomWide ? [ROOM_MAIN, ROOM_29, ROOM_17] : [ROOM_MAIN, ROOM_29]), [isRoomWide]);
+
+  const openViewer = useCallback((items: ViewerItem[], index: number, trigger: HTMLElement) => {
+    lastTrigger.current = trigger;
+    setViewer({ items, index });
+  }, []);
+  const closeViewer = useCallback(() => {
+    setViewer(null);
+    lastTrigger.current?.focus();
+  }, []);
+  const prevItem = useCallback(() => {
+    setViewer((v) => (v ? { ...v, index: (v.index - 1 + v.items.length) % v.items.length } : v));
+  }, []);
+  const nextItem = useCallback(() => {
+    setViewer((v) => (v ? { ...v, index: (v.index + 1) % v.items.length } : v));
+  }, []);
+
+  // Stage B — music activation. Uses only the existing public PlayerContext API; PlayerContext
+  // itself is untouched. See the report for why setPlaylist([3 tracks]) here is safe: /music's
+  // own seed effect immediately re-establishes the full 215-track catalog the moment it mounts.
+  const { currentTrack, isPlaying, currentTime, play, togglePlay, setPlaylist } = usePlayer();
+  const reelStop = useRef<() => void>(() => {});
+  const activeTapeIndex = TAPE_TRACKS.findIndex((t) => t.id === currentTrack?.id);
+  const tapeSeconds = activeTapeIndex >= 0 ? currentTime : 0;
+
+  const handleTapePlay = (idx: number) => {
+    const isActive = activeTapeIndex === idx;
+    const willPlay = !isActive || !isPlaying;
+    // Rule: starting/resuming a Tape song stops any active Reel video first.
+    if (willPlay) reelStop.current();
+    if (isActive) {
+      togglePlay();
+    } else {
+      setPlaylist(TAPE_TRACKS, idx);
+      play();
+    }
+  };
+
+  return (
+    <main className="hp -mx-2 -mt-20 sm:-mx-4 md:-mx-6">
+      {/* ------------------------------ 01 ENTRANCE ------------------------------ */}
+      <section className="hp-hero" aria-label="Entrance">
+        <Image
+          src="/gallery/26.jpeg"
+          alt="1TakeQuan performing with a microphone under warm stage lights"
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover object-[46%_40%] md:object-[46%_35%]"
+        />
+        <div className="hp-hero-scrim" />
+        <div className="hp-hero-block">
+          <h1 className="hp-display">1TAKEQUAN</h1>
+          <div className="hp-hero-release">
+            {/* Stage A: decorative only — not a working control. */}
+            <span className="hp-play" aria-hidden="true">
+              <PlayGlyph />
+            </span>
+            <div>
+              <div className="hp-mono hp-hero-title">Fake Freaky Remix</div>
+              <div className="hp-hero-credit">1TakeQuan ft. Lil Vada</div>
+            </div>
+          </div>
+          <p className="hp-mono hp-hero-mark">TAKE 01 · SC 01</p>
+        </div>
+        <div className="hp-mono hp-hero-cue" aria-hidden="true">Scroll</div>
       </section>
 
-      {/* About Preview */}
-      <section className="py-20 bg-zinc-900">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="grid md:grid-cols-2 gap-12 items-center">
-            <div className="relative aspect-square rounded-2xl overflow-hidden bg-gradient-to-br from-orange-500/10 to-red-600/10 p-8 border-2 border-zinc-800">
-              <Image src="/logo.PNG" alt="1TakeQuan Logo" fill className="object-contain p-8" />
+      {/* ------------------------------ 02 COVERAGE ------------------------------ */}
+      <section className="hp-cov" aria-label="Coverage">
+        <div className="hp-wrap">
+          <div className="hp-cov-c">
+            <h2 className="sr-only">Coverage</h2>
+
+            <div className="hp-print hp-p28">
+              <div className="hp-img">
+                <Image src="/gallery/28.JPG" alt="1TakeQuan on stage with a microphone in front of a crowd" fill sizes="(min-width:1024px) 58vw, 100vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 28</span>
+              <ViewTrigger label="Frame 28" onOpen={(el) => openViewer(COVERAGE_ITEMS, 0, el)} />
             </div>
-            <div>
-              <h2 className="text-4xl md:text-5xl font-bold mb-6 bg-gradient-to-r from-orange-500 to-red-600 bg-clip-text text-transparent">
-                About 1TakeQuan
-              </h2>
-              <p className="text-gray-300 text-lg mb-6 leading-relaxed">
-                Rising from the underground scene, 1TakeQuan brings raw energy and authentic storytelling to every track. Known for
-                one-take recording sessions and unfiltered lyrics, he's building a loyal fanbase that appreciates real hip-hop.
-              </p>
-              <p className="text-gray-300 text-lg mb-8 leading-relaxed">
-                From street anthems to introspective bangers, 1TakeQuan's catalog showcases versatility while staying true to his roots.
-                No auto-tune, no gimmicks—just bars.
-              </p>
-              <Link
-                href="/about"
-                className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 rounded-full font-bold text-lg transition shadow-lg hover:shadow-orange-500/50"
-              >
-                Read Full Bio
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                </svg>
+            <div className="hp-print hp-p51">
+              <div className="hp-img">
+                <Image src="/gallery/51.JPG" alt="1TakeQuan in a mustard hoodie with the character logo, blue lamp behind" fill sizes="(min-width:1024px) 31vw, 60vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 51</span>
+              <ViewTrigger label="Frame 51" onOpen={(el) => openViewer(COVERAGE_ITEMS, 1, el)} />
+            </div>
+            <div className="hp-print hp-p35">
+              <div className="hp-img">
+                <Image src="/gallery/35.JPG" alt="1TakeQuan laughing in a cream jacket at night" fill sizes="(min-width:1024px) 20vw, 45vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 35</span>
+              <ViewTrigger label="Frame 35" onOpen={(el) => openViewer(COVERAGE_ITEMS, 2, el)} />
+            </div>
+            <div className="hp-print hp-p32">
+              <div className="hp-img">
+                <Image src="/gallery/32.JPG" alt="Fans reaching toward 1TakeQuan at the front of the crowd" fill sizes="(min-width:1024px) 43vw, 90vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 32</span>
+              <ViewTrigger label="Frame 32" onOpen={(el) => openViewer(COVERAGE_ITEMS, 3, el)} />
+            </div>
+            <div className="hp-print hp-p9">
+              <div className="hp-img">
+                <Image src="/gallery/9.jpeg" alt="1TakeQuan in the studio booth, seen from behind in blue light" fill sizes="(min-width:1024px) 24vw, 50vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 09</span>
+              <ViewTrigger label="Frame 09" onOpen={(el) => openViewer(COVERAGE_ITEMS, 4, el)} />
+            </div>
+            <div className="hp-print hp-p40">
+              <div className="hp-img">
+                <Image src="/gallery/40.JPG" alt="1TakeQuan in a white studio with cash on the floor" fill sizes="(min-width:1024px) 26vw, 50vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 40</span>
+              <ViewTrigger label="Frame 40" onOpen={(el) => openViewer(COVERAGE_ITEMS, 5, el)} />
+            </div>
+            <div className="hp-print hp-p37">
+              <div className="hp-img">
+                <Image src="/gallery/37.jpeg" alt="A dense crowd of fans holding up phones" fill sizes="(min-width:1024px) 36vw, 80vw" className="object-cover" />
+              </div>
+              <span className="hp-tab hp-mono">Frame 37</span>
+              <ViewTrigger label="Frame 37" onOpen={(el) => openViewer(COVERAGE_ITEMS, 6, el)} />
+            </div>
+
+            {/* Desktop frame captions (tablet/mobile use the corner tabs on each print) */}
+            <p className="hp-cap hp-mono" style={{ "--cx": 640, "--cy": 450 } as CSSProperties}>Frame 28</p>
+            <p className="hp-cap hp-mono" style={{ "--cx": 980, "--cy": 528 } as CSSProperties}>Frame 51</p>
+            <p className="hp-cap hp-mono" style={{ "--cx": 1192, "--cy": 402 } as CSSProperties}>Frame 35</p>
+            <p className="hp-cap hp-mono" style={{ "--cx": 440, "--cy": 874 } as CSSProperties}>Frame 32</p>
+            <p className="hp-cap hp-mono" style={{ "--cx": 700, "--cy": 926 } as CSSProperties}>Frame 09</p>
+            <p className="hp-cap hp-mono" style={{ "--cx": 1080, "--cy": 991 } as CSSProperties}>Frame 40</p>
+            <p className="hp-cap hp-mono" style={{ "--cx": 0, "--cy": 954, textAlign: "left" } as CSSProperties}>Frame 37</p>
+
+            <div className="hp-cov-info">
+              <p className="hp-mono">TAKE 01 · SC 02</p>
+              <p className="hp-mono">Frames 09 · 28 · 32 · 35 · 37 · 40 · 51</p>
+              <Link href="/content" className="hp-route">
+                See all 64 frames →
               </Link>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Newsletter */}
-      <SignupBar />
-    </div>
-  );
-}
+      {/* ------------------------------ 03 THE TAPE ------------------------------ */}
+      <section className="hp-tape" aria-label="The Tape">
+        <div className="hp-wrap">
+          <div className="hp-tape-c">
+            {/* Jump In — subordinate tape, tucked under the lead */}
+            <div className={`hp-print hp-tp-ji${activeTapeIndex === 1 ? " hp-tp-active" : ""}`}>
+              <div className="hp-img">
+                <YT id="fClzw0x4WQQ" alt="Jump In — official music video thumbnail" hi sizes="(min-width:1024px) 30vw, 60vw" className="scale-[1.35]" />
+                <button
+                  type="button"
+                  className="hp-play hp-play--paper hp-tp-sm"
+                  onClick={() => handleTapePlay(1)}
+                  aria-label={activeTapeIndex === 1 && isPlaying ? "Pause Jump In" : "Play Jump In"}
+                >
+                  {activeTapeIndex === 1 && isPlaying ? <PauseGlyph /> : <PlayGlyph />}
+                </button>
+              </div>
+              <span className="hp-tp-tab hp-mono">Jump In</span>
+              <ViewTrigger label="Jump In artwork" onOpen={(el) => openViewer(TAPE_ITEMS, 1, el)} />
+              {activeTapeIndex === 1 && <TapeClock seconds={tapeSeconds} />}
+            </div>
+            <div className={`hp-print hp-tp-pl${activeTapeIndex === 2 ? " hp-tp-active" : ""}`}>
+              <div className="hp-img">
+                <YT id="9fo8k5-EkkA" alt="Plumber — official music video thumbnail" sizes="(min-width:1024px) 27vw, 55vw" />
+                <button
+                  type="button"
+                  className="hp-play hp-play--paper hp-tp-sm"
+                  onClick={() => handleTapePlay(2)}
+                  aria-label={activeTapeIndex === 2 && isPlaying ? "Pause Plumber" : "Play Plumber"}
+                >
+                  {activeTapeIndex === 2 && isPlaying ? <PauseGlyph /> : <PlayGlyph />}
+                </button>
+              </div>
+              <span className="hp-tp-tab hp-mono">Plumber</span>
+              <ViewTrigger label="Plumber artwork" onOpen={(el) => openViewer(TAPE_ITEMS, 2, el)} />
+              {activeTapeIndex === 2 && <TapeClock seconds={tapeSeconds} />}
+            </div>
 
-async function fetchTitleFromVideoId(videoId: string): Promise<string | undefined> {
-  try {
-    const yt = `https://www.youtube.com/watch?v=${videoId}`;
-    const res = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(yt)}`);
-    if (!res.ok) return;
-    const data = (await res.json()) as { title?: string };
-    return data.title;
-  } catch {
-    return;
-  }
+            {/* Lead */}
+            <div className={`hp-print hp-tp-lead${activeTapeIndex === 0 ? " hp-tp-active" : ""}`}>
+              <div className="hp-img">
+                <YT id="i_a2LhIVhJk" alt="Fake Freaky Remix — official music video thumbnail" hi sizes="(min-width:1024px) 70vw, 100vw" className="scale-[1.2]" />
+              </div>
+              {(activeTapeIndex === 0 || activeTapeIndex === -1) && <TapeClock seconds={tapeSeconds} />}
+              <div className="hp-slab">
+                <h2 className="hp-display">Fake Freaky Remix</h2>
+              </div>
+              <ViewTrigger label="Fake Freaky Remix artwork" onOpen={(el) => openViewer(TAPE_ITEMS, 0, el)} />
+            </div>
+            <button
+              type="button"
+              className="hp-play hp-tp-play"
+              onClick={() => handleTapePlay(0)}
+              aria-label={activeTapeIndex === 0 && isPlaying ? "Pause Fake Freaky Remix" : "Play Fake Freaky Remix"}
+            >
+              {activeTapeIndex === 0 && isPlaying ? <PauseGlyph /> : <PlayGlyph />}
+            </button>
+
+            <div className="hp-tp-text">
+              <p className="hp-tp-credit">1TakeQuan ft. Lil Vada</p>
+              <span className="hp-mono hp-tp-tag">Official music video</span>
+              <p className="hp-tp-quote">&quot;The Great Quan — not a tape, a statement.&quot;</p>
+            </div>
+
+            <Link href="/music" className="hp-route hp-tp-all">
+              All music →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------ 04 THE ROOM ------------------------------ */}
+      <section className="hp-room" aria-labelledby="room-h">
+        <div className="hp-room-c">
+          <div className="hp-room-photo">
+            <Image src="/gallery/1.jpeg" alt="1TakeQuan in profile, singing into a studio microphone, black and white" fill sizes="(min-width:1024px) 46vw, 100vw" className="object-cover object-[50%_20%] lg:object-[50%_30%]" />
+            <div className="hp-room-scrim" />
+            <p className="hp-mono hp-room-mark">TAKE 01 · SC 04</p>
+            <ViewTrigger label="the studio photograph" onOpen={(el) => openViewer(roomItems, 0, el)} />
+          </div>
+          <h2 id="room-h" className="hp-display hp-room-head">
+            <span className="hp-room-num">293</span>
+            <span className="hp-room-unit">TRACKS.</span>
+          </h2>
+          <div className="hp-print hp-room-i29">
+            <div className="hp-img">
+              <Image src="/gallery/29.JPG" alt="A studio mixing session at the console" fill sizes="(min-width:1024px) 26vw, 260px" className="object-cover" />
+            </div>
+            <ViewTrigger label="the mixing session photograph" onOpen={(el) => openViewer(roomItems, 1, el)} />
+          </div>
+          <div className="hp-print hp-room-i17">
+            <div className="hp-img">
+              <Image src="/gallery/17.JPG" alt="Two people in a blue-lit studio" fill sizes="21vw" className="object-cover" />
+            </div>
+            <ViewTrigger label="the studio session photograph" onOpen={(el) => openViewer(roomItems, 2, el)} />
+          </div>
+          <div className="hp-room-body">
+            <p>
+              Rising from the underground scene, 1TakeQuan brings raw energy and authentic storytelling to every track. Known for one-take recording sessions and unfiltered lyrics, he&apos;s building a loyal fanbase that appreciates real hip-hop.
+            </p>
+            <p>No auto-tune, no gimmicks—just bars.</p>
+          </div>
+          <div className="hp-room-links">
+            <Link href="/about" className="hp-route">
+              Read the full story →
+            </Link>
+            <Link href="/content" className="hp-route">
+              Behind the scenes →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------ 05 THE REEL ------------------------------ */}
+      {/* Stage A.2: thumbnails select a video (still only, never autoplay); the large frame's
+          own Play control is what actually starts playback, as one on-demand iframe. No
+          fullscreen photo viewer here — selecting/playing are the Reel's own interactions. */}
+      <ReelSection stopRef={reelStop} />
+
+      {/* ------------------------------ 06 BREAK ------------------------------ */}
+      <section className="hp-break" aria-label="Break">
+        <div className="hp-wrap">
+          <div className="hp-break-c">
+            <p className="hp-mono hp-break-mark">TAKE 01 · SC 06</p>
+            <div className="hp-break-row">
+              {BREAK_FRAMES.map((f, i) => (
+                <div key={f.n} className="hp-frame">
+                  <div className="hp-frame-img">
+                    <Image src={`/gallery/${f.file}`} alt={f.alt} fill sizes="(min-width:1024px) 20vw, 240px" className="object-cover" />
+                    <ViewTrigger label={`Frame ${f.n}`} onOpen={(el) => openViewer(BREAK_ITEMS, i, el)} />
+                  </div>
+                  <p className="hp-mono hp-frame-no">{f.n}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------ 07 THE RUN ------------------------------ */}
+      {/* The poster represents the game, not a photograph — it links straight to
+          /games/quan-runner (its intended primary action) rather than opening the viewer. */}
+      <section className="hp-run" aria-labelledby="run-h">
+        <Image src="/games/quan-runner/bg-mid.png" alt="" fill sizes="100vw" className="object-cover object-[50%_60%]" />
+        <div className="hp-run-inner">
+          <Link href="/games/quan-runner" className="hp-poster" aria-label="Play Quan Runner">
+            <span className="hp-tape-strip a" aria-hidden="true" />
+            <span className="hp-tape-strip b" aria-hidden="true" />
+            <Image src="/games/quan-runner/quan-runner-vertical.png" alt="Quan Runner poster: the character running through an LA sunset with cash and a coin" fill sizes="(min-width:1024px) 28vw, 300px" className="object-cover" />
+          </Link>
+          <div className="hp-run-text">
+            <h2 id="run-h" className="hp-display">
+              Quan Runner
+            </h2>
+            <p>Run through the streets of LA, dodge obstacles, and collect coins!</p>
+            <Link href="/games/quan-runner" className="hp-run-cta hp-mono" style={{ fontSize: 13 }}>
+              Play Quan Runner →
+            </Link>
+            <Link href="/games" className="hp-route hp-run-all">
+              All games
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------ 08 CALL SHEET ------------------------------ */}
+      {/* The photo is the environment behind the signup slip, not a standalone print — left
+          non-interactive rather than adding another oversized click target. */}
+      <section className="hp-call" aria-labelledby="call-h">
+        <div className="hp-call-photo">
+          <Image src="/gallery/3.JPG" alt="1TakeQuan crowd-surfing above fans" fill sizes="100vw" className="object-cover object-[78%_40%] lg:object-[50%_40%]" />
+        </div>
+        {/* Stage A: visual only — fields and button are disabled placeholders; nothing is submitted. */}
+        <div className="hp-slip">
+          <p className="hp-mono">TAKE 01 · SC 08</p>
+          <h2 id="call-h" className="hp-display">
+            Get on the list.
+          </h2>
+          <p>Get exclusive updates, new releases, and event notifications from 1TakeQuan</p>
+          <label className="hp-field">
+            <span className="hp-mono">Email address</span>
+            <input type="email" disabled placeholder="your.email@example.com" />
+          </label>
+          <label className="hp-field">
+            <span className="hp-mono">ZIP code</span>
+            <input type="text" disabled placeholder="12345" />
+            <span className="hp-slip-fine" style={{ marginTop: 6, textTransform: "none", letterSpacing: 0, fontFamily: "Arial, Helvetica, sans-serif" }}>
+              We&apos;ll only use this to show you nearby events
+            </span>
+          </label>
+          <button type="button" className="hp-slip-cta" disabled>
+            Get on the list
+          </button>
+          <p className="hp-slip-fine">We respect your privacy. Unsubscribe anytime.</p>
+        </div>
+        <div className="hp-call-pad" />
+      </section>
+
+      {/* ------------------------------ 09 CREDITS ------------------------------ */}
+      <footer className="hp-credits">
+        <div className="hp-credits-grid">
+          <div className="hp-credits-brand">
+            <Image src="/logo.PNG" alt="1TakeQuan logo" width={56} height={56} className="h-14 w-14 object-contain" />
+            <span className="hp-display">1TAKEQUAN</span>
+          </div>
+          <ul className="nav" aria-label="Site">
+            {NAV.map((l) => (
+              <li key={l.href}>
+                <Link href={l.href} className="hp-mono">
+                  {l.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <ul className="soc" aria-label="Social">
+            {SOCIAL.map((s) => (
+              <li key={s.href}>
+                <a href={s.href} target="_blank" rel="noopener noreferrer" className="hp-mono">
+                  {s.label} ↗
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="hp-credits-bottom">
+          <p className="hp-slogan">1Take Or No Take</p>
+          <p className="hp-mono hp-muted" style={{ margin: 0 }}>
+            © 2026 1TakeQuan · TAKE 01 · SC 09
+          </p>
+        </div>
+      </footer>
+
+      {viewer && (
+        <Lightbox items={viewer.items} index={viewer.index} onClose={closeViewer} onPrev={prevItem} onNext={nextItem} />
+      )}
+    </main>
+  );
 }

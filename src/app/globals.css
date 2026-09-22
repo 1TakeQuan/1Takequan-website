@@ -58,3 +58,593 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.15);
   text-align: center;
 }
+
+/* ==========================================================================
+   Phase 3 · Stage A — homepage static visual skeleton (.hp)
+   Static composition only: no player, no playback, no viewer, no submit logic.
+   Sizes are the approved 1440 design px, scaled with --u (1 design px).
+   ========================================================================== */
+.hp {
+  --hp-ink: #0b0b0c;
+  --hp-ink2: #131315;
+  --hp-paper: #efe9dc;
+  --hp-muted: #8f8a80;
+  --hp-mustard: #d9a82e;
+  --hp-gut: clamp(16px, 4.444vw, 64px);
+  --hp-shadow: 0 18px 40px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(0, 0, 0, 0.4);
+  --hp-shadow-lift: 0 26px 50px rgba(0, 0, 0, 0.6), 0 2px 0 rgba(0, 0, 0, 0.4);
+  background: var(--hp-ink);
+  color: var(--hp-paper);
+  overflow-x: clip;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.hp a { color: inherit; }
+.hp a:focus-visible,
+.hp button:focus-visible {
+  outline: 2px solid var(--hp-mustard);
+  outline-offset: 4px;
+}
+.hp-display {
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  line-height: 0.92;
+}
+.hp-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.hp-route {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+  white-space: nowrap;
+}
+.hp-muted { color: var(--hp-muted); }
+.hp-wrap {
+  container-type: inline-size;
+  width: min(100% - 2 * var(--hp-gut), 1312px);
+  margin-inline: auto;
+}
+.hp-abs {
+  position: absolute;
+  left: calc(var(--x, 0) * var(--u));
+  top: calc(var(--y, 0) * var(--u));
+  width: calc(var(--w) * var(--u));
+  height: calc(var(--h) * var(--u));
+}
+
+/* Circular play VISUAL (static in Stage A) */
+.hp-play {
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background: var(--hp-mustard);
+  color: var(--hp-ink);
+  flex: none;
+  /* Stage B: several of these are now real <button>s — reset the default button chrome. Has no
+     visible effect on the ones still rendered as a plain <span> (Entrance/Reel-still visuals). */
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.hp-play svg { width: 42%; height: 42%; margin-left: 6%; }
+.hp-play--paper { background: var(--hp-paper); }
+
+/* Physical print */
+.hp-print {
+  position: absolute;
+  border: 6px solid var(--hp-paper);
+  background: var(--hp-paper);
+  box-shadow: var(--hp-shadow);
+  box-sizing: border-box;
+  transform: rotate(var(--r, 0deg));
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+.hp-print:hover {
+  transform: translateY(-6px) rotate(0deg);
+  box-shadow: var(--hp-shadow-lift);
+}
+.hp-img { position: relative; width: 100%; height: 100%; overflow: hidden; background: #000; }
+@media (prefers-reduced-motion: reduce) {
+  .hp-print { transition: none; }
+  .hp-print:hover { transform: rotate(var(--r, 0deg)); box-shadow: var(--hp-shadow); outline: 2px solid var(--hp-paper); outline-offset: 4px; }
+}
+
+/* Paper "tape label" stuck across a print corner */
+.hp-label {
+  position: absolute;
+  left: -6px;
+  top: -14px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--hp-paper);
+  color: var(--hp-ink);
+  white-space: nowrap;
+}
+
+/* ------------------------------ 01 ENTRANCE ------------------------------ */
+.hp-hero { position: relative; z-index: 1; height: 100svh; min-height: 600px; max-height: 960px; background: #000; }
+.hp-hero-scrim {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(to top, rgba(11, 11, 12, 0.85) 0%, rgba(11, 11, 12, 0) 38%),
+    linear-gradient(to bottom, rgba(11, 11, 12, 0.55) 0%, rgba(11, 11, 12, 0) 14%);
+}
+.hp-hero-block { position: absolute; left: var(--hp-gut); bottom: 56px; right: var(--hp-gut); }
+.hp-hero h1 { font-size: 44px; margin: 0; }
+.hp-hero-release { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
+.hp-hero-release .hp-play { width: 56px; height: 56px; }
+.hp-hero-title { font-size: 13px; }
+.hp-hero-credit { font-size: 16px; margin-top: 2px; }
+.hp-hero-mark { margin-top: 16px; color: rgba(239, 233, 220, 0.7); }
+.hp-hero-cue { display: none; }
+@media (min-width: 768px) {
+  .hp-hero-block { bottom: 104px; }
+  .hp-hero h1 { font-size: clamp(64px, 7.78vw, 112px); }
+  .hp-hero-mark { position: absolute; right: 0; bottom: -72px; margin: 0; text-align: right; }
+  .hp-hero-cue {
+    position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 8px; color: rgba(239, 233, 220, 0.7);
+  }
+  .hp-hero-cue::before { content: ""; width: 1px; height: 40px; background: rgba(239, 233, 220, 0.7); }
+}
+
+/* ------------------------------ 02 COVERAGE ------------------------------ */
+.hp-cov { position: relative; z-index: 4; background: var(--hp-ink); }
+.hp-cov-c { --u: calc(100cqw / 1312); position: relative; height: calc(1300 * var(--u)); }
+.hp-cov .hp-print { left: calc(var(--x) * var(--u)); top: calc(var(--y) * var(--u)); width: calc(var(--w) * var(--u)); height: calc(var(--h) * var(--u)); }
+.hp-p28 { --x: 0; --y: -60; --w: 760; --h: 507; --r: 0deg; z-index: 2; }
+.hp-p51 { --x: 700; --y: -40; --w: 400; --h: 560; --r: 1.2deg; z-index: 5; }
+.hp-p35 { --x: 1062; --y: 20; --w: 250; --h: 375; --r: -1deg; z-index: 3; }
+.hp-p32 { --x: 0; --y: 420; --w: 560; --h: 448; --r: 0deg; z-index: 3; }
+.hp-p9 { --x: 520; --y: 470; --w: 300; --h: 450; --r: -1.5deg; z-index: 6; }
+.hp-p40 { --x: 860; --y: 560; --w: 340; --h: 425; --r: 0.8deg; z-index: 4; }
+.hp-p37 { --x: 120; --y: 950; --w: 460; --h: 410; --r: 0deg; z-index: 7; }
+.hp-cap { position: absolute; left: calc(var(--cx) * var(--u)); top: calc(var(--cy) * var(--u)); width: calc(120 * var(--u)); text-align: right; color: var(--hp-muted); z-index: 8; }
+.hp-tab {
+  display: none;
+  position: absolute; z-index: 3; left: -6px; top: -6px;
+  padding: 2px 8px; background: var(--hp-paper); color: var(--hp-ink); font-size: 10px; letter-spacing: 0.1em;
+}
+.hp-p35 .hp-tab { top: auto; bottom: -6px; }
+.hp-cov-info { position: absolute; left: calc(700 * var(--u)); top: calc(1100 * var(--u)); width: calc(612 * var(--u)); }
+.hp-cov-info p { margin: 0 0 8px; color: var(--hp-muted); }
+.hp-cov-info .hp-route { display: inline-block; margin-top: 52px; color: var(--hp-paper); }
+@media (max-width: 1023.98px) {
+  .hp-cov-c { --u: calc(100cqw / 704); height: calc(1060 * var(--u)); }
+  .hp-p28 { --x: 0; --y: -32; --w: 520; --h: 347; }
+  .hp-p51 { --x: 420; --y: -20; --w: 300; --h: 420; }
+  .hp-p35 { --x: 500; --y: 380; --w: 180; --h: 270; }
+  .hp-p32 { --x: 0; --y: 300; --w: 400; --h: 320; }
+  .hp-p9 { --x: 330; --y: 470; --w: 220; --h: 330; }
+  .hp-p40 { --x: 20; --y: 650; --w: 250; --h: 312; }
+  .hp-p37 { --x: 300; --y: 800; --w: 360; --h: 321; }
+  .hp-cap { display: none; }
+  .hp-tab { display: block; }
+  .hp-cov-info { left: 0; top: calc(985 * var(--u)); width: calc(280 * var(--u)); }
+  .hp-cov-info .hp-route { margin-top: 12px; }
+}
+@media (max-width: 599.98px) {
+  .hp-cov-c { --u: calc(100cqw / 358); height: calc(1320 * var(--u)); }
+  .hp-p28 { --x: 0; --y: -28; --w: 358; --h: 239; }
+  .hp-p51 { --x: 150; --y: 190; --w: 208; --h: 291; }
+  .hp-p35 { --x: 0; --y: 260; --w: 150; --h: 225; }
+  .hp-p32 { --x: 0; --y: 470; --w: 300; --h: 240; }
+  .hp-p9 { --x: 200; --y: 640; --w: 158; --h: 237; }
+  .hp-p40 { --x: 0; --y: 700; --w: 200; --h: 250; }
+  .hp-p37 { --x: 60; --y: 930; --w: 298; --h: 265; }
+  .hp-p35 .hp-tab { top: -6px; bottom: auto; }
+  .hp-cov-info { left: 0; top: calc(1215 * var(--u)); width: 100%; }
+  .hp-cov-info .hp-route { margin-top: 8px; }
+}
+
+/* ------------------------------ 03 THE TAPE ------------------------------ */
+.hp-tape { position: relative; z-index: 3; background: var(--hp-ink2); }
+.hp-tape-c {
+  --u: min(calc(100cqw / 358), 1.6px);
+  position: relative; width: calc(358 * var(--u)); margin-inline: auto; height: calc(520 * var(--u));
+  --fs-title: calc(26 * var(--u)); --fs-credit: 18px; --fs-quote: 14px;
+}
+.hp-tape-c .hp-print { left: calc(var(--x) * var(--u)); top: calc(var(--y) * var(--u)); width: calc(var(--w) * var(--u)); height: calc(var(--h) * var(--u)); }
+.hp-tp-lead { --x: 2; --y: 24; --w: 354; --h: 204; --r: -1.5deg; z-index: 6; }
+.hp-tp-ji { --x: 10; --y: 340; --w: 220; --h: 124; --r: 3deg; z-index: 4; }
+.hp-tp-pl { --x: 140; --y: 450; --w: 200; --h: 113; --r: -2.5deg; z-index: 5; }
+.hp-slab {
+  position: absolute; z-index: 2; left: calc(-2 * var(--u)); top: calc(162 * var(--u));
+  width: calc(260 * var(--u)); height: calc(56 * var(--u));
+  display: flex; align-items: center; padding: 0 calc(12 * var(--u));
+  background: var(--hp-paper); color: var(--hp-ink); box-shadow: var(--hp-shadow);
+}
+.hp-slab h2 { margin: 0; font-size: var(--fs-title); }
+.hp-tp-play { position: absolute; z-index: 8; left: calc(294 * var(--u)); top: calc(172 * var(--u)); width: calc(72 * var(--u)); height: calc(72 * var(--u)); }
+.hp-tp-text { position: absolute; left: calc(12 * var(--u)); top: calc(250 * var(--u)); width: calc(330 * var(--u)); }
+.hp-tp-credit { font-size: var(--fs-credit); font-weight: 700; margin: 0; }
+.hp-tp-tag { display: inline-block; margin-top: 6px; padding: 2px 8px; border: 1px solid rgba(239, 233, 220, 0.5); }
+.hp-tp-quote { margin: 10px 0 0; font-size: var(--fs-quote); font-style: italic; color: var(--hp-muted); line-height: 1.35; }
+.hp-tp-sm { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; transform: translate(-50%, -50%); }
+.hp-tp-tab { position: absolute; z-index: 3; left: -6px; bottom: -6px; padding: 2px 8px; background: var(--hp-paper); color: var(--hp-ink); font-size: 10px; }
+.hp-tp-all { position: absolute; left: calc(10 * var(--u)); top: calc(490 * var(--u)); z-index: 6; }
+/* Restrained "this is cued up" cue — a thin mustard ring layered onto the print's existing
+   shadow, not a recolour of the artwork itself. */
+.hp-tp-active { box-shadow: var(--hp-shadow), 0 0 0 2px var(--hp-mustard); }
+/* The single SC03 clock fades in wherever it (re)mounts — i.e. only when ownership travels to a
+   different print. Going active<->neutral on the same (lead) print doesn't remount it, so no
+   fade fires there, matching "one label, no flying". */
+.hp-tp-clock { animation: hp-clock-in 160ms ease-out; }
+@keyframes hp-clock-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hp-tp-clock { animation: none; }
+}
+/* Bug fix: FloatingPlayer/clock collision. The clock's default top-left corner (inherited from
+   .hp-label) can land underneath the fixed FloatingPlayer at its default docked position, at the
+   <1024px Tape layout, at the scroll position where a record's print has just scrolled into view
+   — measured and confirmed for all three records. Moving each record's clock further down its
+   own print keeps it a corner-attached physical tag (never a detached/floating element) and, on
+   Jump In/Plumber, clears their own centered play control too. Fake Freaky has generous room, so
+   a single real-px offset is enough; Jump In/Plumber are scaled with --u so the offset tracks
+   their print (and its play control) at both the sub-600px and capped 600–1023px sizes. This is
+   a positioning-only change — the clock's markup, text, and fade-in are untouched. */
+@media (max-width: 1023.98px) {
+  .hp-tp-lead .hp-tp-clock { top: 64px; }
+  .hp-tp-ji .hp-tp-clock { top: calc(82 * var(--u)); }
+  .hp-tp-pl .hp-tp-clock { top: calc(75 * var(--u)); }
+}
+@media (min-width: 1024px) {
+  .hp-tape-c {
+    --u: calc(100cqw / 1312); width: 100%; height: calc(820 * var(--u));
+    --fs-title: max(20px, calc(44 * var(--u))); --fs-credit: max(16px, calc(24 * var(--u))); --fs-quote: max(12px, calc(16 * var(--u)));
+  }
+  .hp-tp-lead { --x: 110; --y: 36; --w: 912; --h: 518; }
+  .hp-tp-ji { --x: 926; --y: 90; --w: 386; --h: 218; }
+  .hp-tp-pl { --x: 930; --y: 663; --w: 346; --h: 197; }
+  .hp-slab { left: calc(-34 * var(--u)); top: calc(450 * var(--u)); width: calc(572 * var(--u)); height: calc(96 * var(--u)); padding: 0 calc(24 * var(--u)); }
+  .hp-slab h2 { white-space: nowrap; }
+  .hp-tp-play { left: calc(970 * var(--u)); top: calc(536 * var(--u)); width: calc(96 * var(--u)); height: calc(96 * var(--u)); }
+  .hp-tp-text { left: calc(110 * var(--u)); top: calc(628 * var(--u)); width: calc(700 * var(--u)); }
+  .hp-tp-all { left: calc(110 * var(--u)); top: calc(740 * var(--u) + 24px); }
+  .hp-tp-sm { width: 44px; height: 44px; }
+  /* the outgoing 37.jpeg print overhangs the lead's upper-left corner, so the tape label sits on the upper-right */
+  .hp-tp-lead .hp-label { left: auto; right: -6px; }
+}
+
+/* ------------------------------ 04 THE ROOM ------------------------------ */
+.hp-room { position: relative; z-index: 2; background: var(--hp-ink); container-type: inline-size; }
+.hp-room-c { --u: 1px; position: relative; padding-bottom: 72px; }
+.hp-room-photo { position: relative; height: 520px; }
+.hp-room-scrim { position: absolute; inset: 0; background: linear-gradient(to top, rgba(11, 11, 12, 0.75) 0%, rgba(11, 11, 12, 0) 45%); }
+.hp-room-mark { position: absolute; right: var(--hp-gut); top: 16px; color: rgba(239, 233, 220, 0.8); }
+.hp-room-head { position: absolute; left: var(--hp-gut); top: 366px; margin: 0; }
+.hp-room-num { display: block; font-size: 88px; }
+.hp-room-unit { display: block; font-size: 32px; margin-top: 4px; }
+.hp-room-i29 { position: absolute; right: var(--hp-gut); top: 480px; width: 200px; height: 160px; z-index: 3; }
+.hp-room-i17 { display: none; }
+.hp-room-body { padding: 160px var(--hp-gut) 0; max-width: 620px; }
+.hp-room-body p { margin: 0 0 16px; font-size: 18px; line-height: 1.5; color: rgba(239, 233, 220, 0.92); }
+.hp-room-links { padding: 16px var(--hp-gut) 0; display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 768px) {
+  .hp-room-photo { height: 480px; }
+  .hp-room-head { top: 320px; }
+  .hp-room-num { font-size: 120px; }
+  .hp-room-unit { font-size: 44px; }
+  .hp-room-i29 { top: 420px; width: 260px; height: 208px; }
+  .hp-room-body { padding-top: 190px; }
+}
+@media (min-width: 1024px) {
+  .hp-room-c { --u: calc(100cqw / 1440); height: calc(900 * var(--u)); padding-bottom: 0; }
+  .hp-room-photo { position: absolute; left: 0; top: 0; width: calc(662 * var(--u)); height: calc(900 * var(--u)); }
+  .hp-room-scrim { background: linear-gradient(to top, rgba(11, 11, 12, 0.7) 0%, rgba(11, 11, 12, 0) 160px); }
+  .hp-room-mark { right: auto; left: var(--hp-gut); top: auto; bottom: calc(48 * var(--u)); }
+  .hp-room-head { left: calc(760 * var(--u)); top: calc(80 * var(--u)); }
+  .hp-room-num { font-size: calc(200 * var(--u)); }
+  .hp-room-unit { font-size: calc(72 * var(--u)); margin-top: 0; }
+  .hp-room-body { position: absolute; left: calc(760 * var(--u)); top: calc(358 * var(--u)); width: calc(560 * var(--u)); padding: 0; }
+  .hp-room-body p { font-size: max(15px, calc(20 * var(--u))); margin-bottom: calc(16 * var(--u)); }
+  .hp-room-links { position: absolute; left: calc(1040 * var(--u)); top: calc(570 * var(--u)); padding: 0; }
+  .hp-room-i29 { left: calc(620 * var(--u)); right: auto; top: calc(570 * var(--u)); width: calc(380 * var(--u)); height: calc(304 * var(--u)); }
+  .hp-room-i17 { display: block; position: absolute; left: calc(1076 * var(--u)); top: calc(660 * var(--u)); width: calc(300 * var(--u)); height: calc(200 * var(--u)); z-index: 3; }
+}
+
+/* ------------------------------ 05 THE REEL ------------------------------ */
+.hp-reel { position: relative; z-index: 1; background: var(--hp-ink2); padding: 72px 0; }
+.hp-reel-frame { position: relative; aspect-ratio: 16 / 9; width: 100%; margin-top: 20px; border: 6px solid var(--hp-paper); box-sizing: border-box; box-shadow: var(--hp-shadow); background: #000; }
+.hp-reel-frame .hp-label { z-index: 3; }
+.hp-reel-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.hp-reel-play { position: absolute; left: 50%; top: 50%; width: 72px; height: 72px; transform: translate(-50%, -50%); border: 0; padding: 0; cursor: pointer; }
+.hp-reel-side { margin-top: 24px; }
+.hp-reel-side h3 { margin: 6px 0 0; font-size: 32px; }
+/* Stage A.2: a genuinely horizontally-scrollable filmstrip (not a fit-everything strip) — fixed
+   thumbnail size at every breakpoint, so at 1440 the 10 thumbnails overflow their box and the
+   partially-visible last one signals there is more to scroll to. */
+.hp-reel-stripwrap { margin-top: 24px; display: flex; align-items: center; gap: 8px; }
+.hp-reel-strip {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.hp-reel-strip::-webkit-scrollbar { display: none; }
+.hp-thumb {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 136px;
+  height: 77px;
+  scroll-snap-align: start;
+  opacity: 0.55;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.hp-thumb[aria-current="true"] { opacity: 1; }
+.hp-thumb[aria-current="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -6px; height: 3px; background: var(--hp-mustard); }
+.hp-thumb:focus-visible { outline: 2px solid var(--hp-mustard); outline-offset: -3px; }
+/* Hidden below 1024 — native touch/trackpad swipe is enough on tablet and mobile. */
+.hp-reel-scroll { display: none; }
+.hp-reel-route { margin-top: 20px; text-align: right; }
+@media (min-width: 1024px) {
+  .hp-reel { padding: 0; }
+  .hp-reel-c { --u: calc(100cqw / 1312); position: relative; height: calc(800 * var(--u)); }
+  .hp-reel-frame { position: absolute; left: 0; top: calc(60 * var(--u)); width: calc(960 * var(--u)); margin: 0; }
+  .hp-reel-side { position: absolute; left: calc(1000 * var(--u)); top: calc(60 * var(--u)); width: calc(312 * var(--u)); margin: 0; }
+  .hp-reel-side h3 { font-size: max(24px, calc(40 * var(--u))); }
+  .hp-reel-stripwrap { position: absolute; left: 0; top: calc(640 * var(--u)); width: 100%; margin: 0; }
+  .hp-reel-strip { flex: 1 1 auto; min-width: 0; }
+  .hp-reel-scroll {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    border: 1px solid rgba(239, 233, 220, 0.35);
+    color: var(--hp-paper);
+    cursor: pointer;
+  }
+  .hp-reel-scroll:hover { border-color: rgba(239, 233, 220, 0.7); }
+  .hp-reel-scroll svg { width: 14px; height: 14px; }
+  .hp-reel-route { position: absolute; left: 0; right: 0; top: calc(742 * var(--u)); margin: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hp-reel-strip { scroll-behavior: auto; }
+}
+
+/* ------------------------------ 06 BREAK --------------------------------- */
+.hp-break { position: relative; z-index: 1; background: var(--hp-paper); color: var(--hp-ink); padding: 56px 0 56px; }
+.hp-break-mark { padding-left: var(--hp-gut); margin: 0 0 28px; }
+.hp-break-row { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 0 var(--hp-gut) 8px; scroll-padding-left: var(--hp-gut); }
+.hp-frame { flex: none; width: 240px; scroll-snap-align: start; }
+.hp-frame-img { position: relative; width: 100%; aspect-ratio: 3 / 4; border: 1px solid var(--hp-ink); box-sizing: border-box; background: #000; transition: transform 120ms ease-out, box-shadow 120ms ease-out; }
+.hp-frame:hover .hp-frame-img { transform: translateY(-6px); box-shadow: 0 14px 28px rgba(11, 11, 12, 0.35); }
+.hp-frame-no { margin-top: 10px; color: rgba(11, 11, 12, 0.7); }
+@media (prefers-reduced-motion: reduce) {
+  .hp-frame-img { transition: none; }
+  .hp-frame:hover .hp-frame-img { transform: none; box-shadow: none; outline: 2px solid var(--hp-ink); outline-offset: 3px; }
+}
+@media (min-width: 1024px) {
+  .hp-break { padding: 0; }
+  .hp-break-c { --u: calc(100cqw / 1312); position: relative; height: calc(620 * var(--u)); }
+  .hp-break-mark { position: absolute; left: 0; top: calc(56 * var(--u)); padding: 0; margin: 0; }
+  .hp-break-row { position: absolute; left: 0; top: calc(150 * var(--u)); width: 100%; gap: calc(15 * var(--u)); padding: 0; overflow: visible; }
+  .hp-frame { width: calc(250 * var(--u)); }
+}
+
+/* ------------------------------ 07 THE RUN ------------------------------- */
+.hp-run { position: relative; z-index: 1; color: var(--hp-ink); background: #6b3d7a; }
+.hp-run-inner { position: relative; display: flex; flex-direction: column; align-items: center; padding: 72px var(--hp-gut) 80px; gap: 32px; }
+.hp-poster { position: relative; flex: none; width: 240px; aspect-ratio: 2 / 3; border: 10px solid var(--hp-paper); box-sizing: border-box; background: var(--hp-paper); box-shadow: var(--hp-shadow); transition: transform 120ms ease-out, box-shadow 120ms ease-out; }
+.hp-poster:hover, .hp-poster:focus-visible { transform: translateY(-8px); box-shadow: var(--hp-shadow-lift); }
+.hp-poster .hp-tape-strip { position: absolute; z-index: 2; width: 84px; height: 24px; background: rgba(239, 233, 220, 0.78); }
+.hp-poster .hp-tape-strip.a { top: -14px; left: -26px; transform: rotate(-35deg); }
+.hp-poster .hp-tape-strip.b { top: -14px; right: -26px; transform: rotate(35deg); }
+.hp-run-text { position: relative; align-self: stretch; }
+.hp-run-text h2 { margin: 0; font-size: 56px; color: var(--hp-ink); }
+.hp-run-text p { margin: 16px 0 0; font-size: 18px; line-height: 1.5; max-width: 520px; color: var(--hp-ink); }
+.hp-run-cta { display: flex; align-items: center; justify-content: center; margin-top: 24px; width: 100%; height: 52px; background: var(--hp-paper); color: var(--hp-ink); text-decoration: none; }
+.hp-run-all { display: inline-block; margin-top: 18px; color: var(--hp-ink); }
+@media (prefers-reduced-motion: reduce) {
+  .hp-poster { transition: none; }
+  .hp-poster:hover, .hp-poster:focus-visible { transform: none; outline: 2px solid var(--hp-paper); outline-offset: 4px; }
+}
+@media (min-width: 768px) {
+  .hp-run-inner { flex-direction: row-reverse; justify-content: space-between; align-items: center; padding-block: 96px; }
+  .hp-poster { width: 300px; }
+  .hp-run-text { align-self: center; max-width: 380px; }
+  .hp-run-text h2 { font-size: 64px; }
+  .hp-run-cta { width: 300px; padding: 0 24px; }
+}
+@media (min-width: 1024px) {
+  .hp-run { height: clamp(700px, 62.5vw, 900px); }
+  .hp-run-inner { height: 100%; padding: 0 var(--hp-gut); flex-direction: row-reverse; justify-content: flex-start; gap: 0; }
+  .hp-poster { position: absolute; left: 55.55%; top: 50%; transform: translateY(-50%); width: min(27.78vw, 400px); }
+  .hp-poster:hover, .hp-poster:focus-visible { transform: translateY(calc(-50% - 8px)); }
+  .hp-run-text { position: absolute; left: var(--hp-gut); top: 16%; max-width: 560px; }
+  .hp-run-text h2 { font-size: clamp(64px, 6.7vw, 96px); }
+  .hp-run-text p { font-size: 20px; }
+  .hp-run-cta { width: 320px; }
+}
+@media (min-width: 1024px) and (prefers-reduced-motion: reduce) {
+  .hp-poster:hover, .hp-poster:focus-visible { transform: translateY(-50%); }
+}
+
+/* ------------------------------ 08 CALL SHEET ---------------------------- */
+.hp-call { position: relative; z-index: 1; background: var(--hp-ink); }
+.hp-call-photo { position: relative; height: 300px; }
+.hp-slip { position: relative; margin: -48px var(--hp-gut) 0; padding: 28px 24px 32px; background: var(--hp-paper); color: var(--hp-ink); box-shadow: var(--hp-shadow); }
+.hp-slip h2 { margin: 12px 0 0; font-size: 38px; }
+.hp-slip p { margin: 12px 0 0; font-size: 15px; line-height: 1.45; }
+.hp-field { display: block; margin-top: 22px; }
+.hp-field span { display: block; }
+.hp-field input {
+  display: block; width: 100%; margin-top: 6px; padding: 8px 0; border: 0; border-bottom: 1px solid var(--hp-ink);
+  background: transparent; color: var(--hp-ink); font-size: 16px; border-radius: 0; opacity: 1;
+}
+.hp-field input::placeholder { color: rgba(11, 11, 12, 0.5); }
+.hp-slip-cta { display: block; width: 100%; margin-top: 26px; height: 52px; border: 0; background: var(--hp-ink); color: var(--hp-paper); font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; opacity: 1; }
+.hp-slip-fine { font-size: 12px; color: rgba(11, 11, 12, 0.7); }
+.hp-call-pad { height: 72px; }
+@media (min-width: 768px) {
+  .hp-call-photo { height: 420px; }
+  .hp-slip { max-width: 520px; }
+}
+@media (min-width: 1024px) {
+  .hp-call { height: clamp(640px, 56.94vw, 820px); }
+  .hp-call-photo { position: absolute; inset: 0; height: auto; }
+  .hp-call-pad { display: none; }
+  .hp-slip { position: absolute; left: var(--hp-gut); top: 14.6%; margin: 0; width: min(30.55vw, 440px); max-width: none; padding: 36px 40px 40px; }
+  .hp-slip h2 { font-size: 44px; }
+}
+
+/* ------------------------------ 09 CREDITS ------------------------------- */
+.hp-credits { position: relative; z-index: 1; background: var(--hp-ink); border-top: 1px solid #26262a; padding: 48px var(--hp-gut) 40px; }
+.hp-credits-grid { display: grid; grid-template-columns: 1fr; gap: 32px; }
+.hp-credits-brand { display: flex; align-items: center; gap: 14px; }
+.hp-credits-brand span { font-size: 28px; }
+.hp-credits ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.hp-credits ul a { text-decoration: none; }
+.hp-credits ul a:hover { text-decoration: underline; text-underline-offset: 5px; }
+.hp-credits-bottom { margin-top: 40px; display: flex; flex-direction: column; gap: 12px; }
+.hp-slogan { font-size: 28px; font-weight: 900; text-transform: none; letter-spacing: -0.01em; line-height: 1; margin: 0; }
+@media (min-width: 1024px) {
+  .hp-credits { height: 320px; padding: 48px var(--hp-gut) 36px; box-sizing: border-box; }
+  .hp-credits-grid { grid-template-columns: 1fr 340px 1fr; gap: 0; align-items: start; }
+  .hp-credits ul.nav { grid-template-columns: 1fr 1fr; }
+  .hp-credits ul.soc { grid-template-columns: 1fr; margin-left: auto; width: 240px; }
+  .hp-credits-bottom { position: absolute; left: var(--hp-gut); right: var(--hp-gut); bottom: 32px; margin: 0; flex-direction: row; justify-content: space-between; align-items: flex-end; }
+  .hp-slogan { font-size: 32px; }
+}
+@media (max-width: 1023.98px) {
+  .hp-break .hp-wrap { width: 100%; }
+}
+
+/* ==========================================================================
+   Stage A.1 — fullscreen media viewer (photography/prints only; play controls
+   and the Reel/game/signup environments are excluded — see page.tsx).
+   ========================================================================== */
+
+/* Transparent trigger laid over a photo/print. Sits above captions/labels (which have no
+   handler, so covering them is fine) but BELOW any real play control:
+     coverage/room/break print, z auto  <  .hp-view (5)  <  hp-tp-sm / hp-tp-play (6–8)
+   so a play glyph's own hit area still intercepts its click and does nothing, exactly as in
+   Stage A, while the rest of that print opens the viewer. :hover on this button also sets
+   :hover on its ancestor .hp-print / .hp-frame, so the existing lift treatment is unaffected. */
+.hp-view {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 8px;
+  background: transparent;
+  border: 0;
+  cursor: zoom-in;
+  -webkit-tap-highlight-color: transparent;
+}
+.hp-view-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  background: rgba(11, 11, 12, 0.55);
+  color: var(--hp-paper);
+  opacity: 0.6;
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.hp-view-icon svg { width: 12px; height: 12px; }
+.hp-view:hover .hp-view-icon,
+.hp-view:focus-visible .hp-view-icon { opacity: 1; transform: scale(1.1); }
+.hp-view:focus-visible { outline: 2px solid var(--hp-mustard); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .hp-view-icon { transition: none; }
+  .hp-view:hover .hp-view-icon, .hp-view:focus-visible .hp-view-icon { transform: none; }
+}
+/* Secondary tape play glyphs and the lead's big play control sit above the view trigger. */
+.hp-tp-sm { z-index: 6; }
+
+.hp-lb {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(11, 11, 12, 0.97);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 16px 76px;
+  box-sizing: border-box;
+  touch-action: none;
+}
+.hp-lb-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.hp-lb-close,
+.hp-lb-nav {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(239, 233, 220, 0.35);
+  color: var(--hp-paper);
+  cursor: pointer;
+}
+.hp-lb-close:hover,
+.hp-lb-nav:hover { border-color: rgba(239, 233, 220, 0.7); }
+.hp-lb-close { top: 14px; right: 14px; width: 48px; height: 48px; }
+.hp-lb-close svg { width: 18px; height: 18px; }
+.hp-lb-nav { top: 50%; width: 52px; height: 52px; transform: translateY(-50%); }
+.hp-lb-nav svg { width: 20px; height: 20px; }
+.hp-lb-prev { left: 10px; }
+.hp-lb-next { right: 10px; }
+.hp-lb-cap { position: absolute; left: 0; right: 0; bottom: 18px; margin: 0; text-align: center; color: var(--hp-paper); }
+.hp-lb-count { color: var(--hp-muted); }
+.hp-lb button:focus-visible { outline: 2px solid var(--hp-mustard); outline-offset: 2px; }
+@media (min-width: 768px) {
+  .hp-lb { padding: 72px 100px; }
+  .hp-lb-nav { width: 56px; height: 56px; }
+}
+
+/* Visual polish: a restrained local contrast scrim behind THE RUN's secondary text/links only —
+   not the poster, not the whole section — so ink text stays readable over the lighter/darker
+   bands of the skyline plate. */
+.hp-run-text::before {
+  content: "";
+  position: absolute;
+  inset: -20px -24px -16px -24px;
+  z-index: -1;
+  background: radial-gradient(120% 140% at 0% 30%, rgba(11, 11, 12, 0.32), rgba(11, 11, 12, 0) 72%);
+  pointer-events: none;
+}
+

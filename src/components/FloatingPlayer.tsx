@@ -148,6 +148,49 @@ export default function FloatingPlayer() {
     return () => cancelAnimationFrame(id);
   }, [isMinimized, hasTrack]);
 
+  // Bug fix: give the playlist rail ownership of wheel/trackpad scrolling while it still has
+  // room to move, and hand the gesture to the page once the rail has hit the start or end of
+  // its own list. Two things make this more than a plain "let it bubble" situation:
+  //   1. React attaches wheel listeners as passive by default, so an onWheel prop can't call
+  //      preventDefault — without that, the browser scrolls the page underneath the rail at the
+  //      same time it scrolls the rail. A native, non-passive listener on the rail itself is what
+  //      actually lets us claim the gesture.
+  //   2. The player is position:fixed, and its scrollable body sits between the rail and the
+  //      page (kept only so controls aren't pushed off-screen on a very short viewport — see
+  //      that div's own comment). Measured directly: once the rail is exhausted, the native
+  //      "bubble past it" gesture gets absorbed by that in-between scroller and never reaches
+  //      real page scroll at all, even though there's plenty of page left to scroll. So instead
+  //      of just declining to handle the event at the boundary, we explicitly hand the remaining
+  //      delta to window.scrollBy ourselves and stop it there, which is what "the page resumes
+  //      scrolling" actually requires here.
+  // The rail only exists in the DOM while expanded, so this re-attaches whenever isMinimized flips.
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el || isMinimized) return;
+
+    const onWheel = (e: WheelEvent) => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      const atTop = scrollTop <= 0;
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 1; // -1: subpixel rounding
+      const scrollingUp = e.deltaY < 0;
+      const scrollingDown = e.deltaY > 0;
+
+      if ((scrollingUp && !atTop) || (scrollingDown && !atBottom)) {
+        // Still room to move the requested way — keep the gesture on the rail, not the page.
+        el.scrollTop += e.deltaY;
+      } else {
+        // Already at the start/end for this direction — send it on to real page scroll
+        // ourselves (see why above) instead of letting it get soaked up in between.
+        window.scrollBy(0, e.deltaY);
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [isMinimized]);
+
   const handlePointerDownDrag = (e: React.PointerEvent) => {
     // only drag via header handle
     if (!(e.target as HTMLElement).closest(".drag-handle")) return;
@@ -360,7 +403,11 @@ export default function FloatingPlayer() {
               </button>
             </div>
 
-            <div ref={railRef} className="max-h-40 overflow-y-auto rounded bg-zinc-800 p-2">
+            {/* touch-pan-y: the player root is touch-action:none (needed so dragging the header
+                moves the player instead of the page). That restriction otherwise reaches down
+                into this rail too, so a finger swipe here wouldn't natively scroll the list —
+                this opts the rail back in to normal vertical touch scrolling. */}
+            <div ref={railRef} className="max-h-40 touch-pan-y overflow-y-auto rounded bg-zinc-800 p-2">
               {playlist.map((track, idx) => (
                 <button
                   key={track.id}

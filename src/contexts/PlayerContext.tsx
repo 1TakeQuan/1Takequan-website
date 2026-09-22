@@ -70,6 +70,16 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const ytPlayerRef = useRef<YTPlayer | null>(null);
   const ytReadyRef = useRef(false);
+  // Bug fix: singleton in-flight/resolved initialization promise for ensureYTPlayer(). Holding
+  // it in a ref (set synchronously, before any await) means a second caller that arrives while
+  // construction is still pending reuses this exact promise instead of constructing a second
+  // YT.Player, and once resolved, later callers just get the already-ready player back.
+  const ytInitPromiseRef = useRef<Promise<YTPlayer> | null>(null);
+  // Bug fix: the track-loading effect below needs to know whether to autoplay a *newly loaded*
+  // track, but must not re-run just because isPlaying toggled (see that effect for why). Reading
+  // the latest value through this ref, instead of listing isPlaying as a dependency, decouples
+  // "should this new track autoplay" from "did playback state change".
+  const isPlayingRef = useRef(false);
 
   const activePlaylist = shuffle ? shuffledPlaylist : playlist;
 
@@ -102,66 +112,82 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Ensure hidden player container exists + create player once
-  const ensureYTPlayer = useCallback(async () => {
-    // wait until API is ready
-    if (!ytReadyRef.current) {
-      await new Promise<void>((resolve) => {
-        const t = setInterval(() => {
-          if ((window as any).YT?.Player) {
-            ytReadyRef.current = true;
-            clearInterval(t);
-            resolve();
-          }
-        }, 50);
+  // Ensure hidden player container exists + create player once.
+  //
+  // Bug fix: this used to resolve with the freshly-constructed YT.Player object immediately —
+  // before YouTube's onReady had fired, so methods like loadVideoById weren't reliably present
+  // yet on a truly fresh session's first call. Callers (the track-loading effect) would then
+  // silently fail to load anything. This now returns a promise that only resolves once onReady
+  // has actually fired, so every caller — the first one and any that arrive while construction
+  // is still pending — safely awaits the same in-flight promise and gets back a player that's
+  // genuinely ready to call loadVideoById/playVideo/pauseVideo/seekTo on.
+  const ensureYTPlayer = useCallback((): Promise<YTPlayer> => {
+    // Already ready, or already being constructed — reuse that same promise either way.
+    if (ytInitPromiseRef.current) return ytInitPromiseRef.current;
+
+    const promise = (async () => {
+      // wait until the API is ready
+      if (!ytReadyRef.current) {
+        await new Promise<void>((resolve) => {
+          const t = setInterval(() => {
+            if ((window as any).YT?.Player) {
+              ytReadyRef.current = true;
+              clearInterval(t);
+              resolve();
+            }
+          }, 50);
+        });
+      }
+
+      let el = document.getElementById("yt-audio-player");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "yt-audio-player";
+        el.style.position = "fixed";
+        el.style.left = "-9999px";
+        el.style.top = "-9999px";
+        el.style.width = "1px";
+        el.style.height = "1px";
+        document.body.appendChild(el);
+      }
+
+      return new Promise<YTPlayer>((resolve) => {
+        new (window as any).YT.Player("yt-audio-player", {
+          height: "1",
+          width: "1",
+          videoId: "dQw4w9WgXcQ", // placeholder; will be replaced
+          playerVars: {
+            autoplay: 0,
+            controls: 0,
+            disablekb: 1,
+            fs: 0,
+            modestbranding: 1,
+            playsinline: 1,
+          },
+          events: {
+            onReady: (e: any) => {
+              try {
+                e.target.setVolume(Math.round(volume * 100));
+              } catch {}
+              ytPlayerRef.current = e.target;
+              resolve(e.target);
+            },
+            onStateChange: (e: any) => {
+              // ended => next
+              if (
+                (window as any).YT?.PlayerState &&
+                e.data === (window as any).YT.PlayerState.ENDED
+              ) {
+                doNext();
+              }
+            },
+          },
+        });
       });
-    }
+    })();
 
-    if (ytPlayerRef.current) return ytPlayerRef.current;
-
-    let el = document.getElementById("yt-audio-player");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "yt-audio-player";
-      el.style.position = "fixed";
-      el.style.left = "-9999px";
-      el.style.top = "-9999px";
-      el.style.width = "1px";
-      el.style.height = "1px";
-      document.body.appendChild(el);
-    }
-
-    ytPlayerRef.current = new (window as any).YT.Player("yt-audio-player", {
-      height: "1",
-      width: "1",
-      videoId: "dQw4w9WgXcQ", // placeholder; will be replaced
-      playerVars: {
-        autoplay: 0,
-        controls: 0,
-        disablekb: 1,
-        fs: 0,
-        modestbranding: 1,
-        playsinline: 1,
-      },
-      events: {
-        onReady: (e: any) => {
-          try {
-            e.target.setVolume(Math.round(volume * 100));
-          } catch {}
-        },
-        onStateChange: (e: any) => {
-          // ended => next
-          if (
-            (window as any).YT?.PlayerState &&
-            e.data === (window as any).YT.PlayerState.ENDED
-          ) {
-            doNext();
-          }
-        },
-      },
-    });
-
-    return ytPlayerRef.current;
+    ytInitPromiseRef.current = promise;
+    return promise;
   }, [volume]);
 
   // Playlist setters
@@ -184,7 +210,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     });
   }, [playlist, shuffleArray]);
 
-  // Load current track into YT when it changes
+  // Load current track into YT when it changes.
+  //
+  // Bug fix: isPlaying used to be a dependency here, so every Play/Pause toggle re-ran this
+  // effect and unconditionally called loadVideoById(id) again — even though the track hadn't
+  // changed — which restarts the video from 0 and discards the current position. This effect's
+  // job is loading a *new* track; play/pause belongs to the separate isPlaying effect below,
+  // which already exists purely to call playVideo()/pauseVideo(). isPlaying is read through a
+  // ref (kept in sync just below) only to decide whether a genuinely new track should autoplay.
   useEffect(() => {
     (async () => {
       const ytUrl = currentTrack?.sources?.youtube;
@@ -201,10 +234,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       } catch {}
 
       // only autoplay if user pressed play
-      if (isPlaying) p.playVideo?.();
+      if (isPlayingRef.current) p.playVideo?.();
       else p.pauseVideo?.();
     })();
-  }, [currentTrack, ensureYTPlayer, isPlaying, volume]);
+  }, [currentTrack, ensureYTPlayer, volume]);
+
+  // Keeps isPlayingRef current without making isPlaying a dependency of the load effect above.
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
 
   // Play/pause
   const play = useCallback(() => setIsPlaying(true), []);

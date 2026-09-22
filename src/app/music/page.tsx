@@ -615,12 +615,19 @@ export default function MusicPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sortedTracks = useMemo(() => sortedItems.map(toTrack), [sortedItems, meta]);
 
-  // Seed the global player once. If the player already has a playlist (e.g. the visitor
-  // navigated away and back), leave it alone so the current track isn't reset.
+  // Establish the full catalog in the global player. Guard on length-matches-ours rather than
+  // "playlist is non-empty": the homepage can hand off a small 3-track playlist (its own
+  // featured releases) before the visitor ever opens this page, and that must never permanently
+  // stand in for the real 215-track catalog here. If the current track is one of ours (by ID,
+  // e.g. handed off from Home) its object reference is preserved so PlayerContext doesn't see a
+  // "new" track and restart playback — same trick the merge effect below already uses.
   useEffect(() => {
-    if (playlist.length > 0 || tracks.length === 0) return;
-    setPlaylist(tracks, 0);
-  }, [playlist.length, tracks, setPlaylist]);
+    if (tracks.length === 0) return;
+    if (playlist.length === tracks.length) return; // already our own full catalog
+    const base = isPlaying && currentTrack ? tracks.map((t) => (t.id === currentTrack.id ? currentTrack : t)) : tracks;
+    const idx = currentTrack ? base.findIndex((t) => t.id === currentTrack.id) : 0;
+    setPlaylist(base, idx >= 0 ? idx : 0);
+  }, [playlist.length, tracks, currentTrack, isPlaying, setPlaylist]);
 
   // Keep the global playlist in step with the page:
   //  - while titles stream in: fill in resolved titles, keeping the existing order;
