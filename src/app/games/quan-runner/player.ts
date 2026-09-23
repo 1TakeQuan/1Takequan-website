@@ -137,9 +137,26 @@ export function getPlayerHitbox(player: Player, m: PlayerMetrics) {
 
 import { loadImage } from "./loadImage";
 const SPRITE_SRC = "/games/quan-runner/quan-runner-run-rear-v1.png";
+// Stage 3A: dedicated rear-view hit-reaction sheet (IMPACT/RECOIL/STAGGER/RECOVERY/SETTLE/
+// BACK TO RUN). Kept as a separate asset from the run sheet by design — not merged into one
+// sheet — so the approved run/jump sheet above stays untouched.
+const HIT_SPRITE_SRC = "/games/quan-runner/quan-runner-hit-rear-v1.png";
+// Stage 3B: dedicated rear-view slide sheet (entry -> lowering -> deep lowering -> full slide
+// -> rise -> return), same "separate asset, not merged" approach as the hit sheet.
+const SLIDE_SPRITE_SRC = "/games/quan-runner/quan-runner-slide-rear-v1.png";
 
 function getSprite() {
   const img = loadImage(SPRITE_SRC);
+  return img;
+}
+
+function getHitSprite() {
+  const img = loadImage(HIT_SPRITE_SRC);
+  return img;
+}
+
+function getSlideSprite() {
+  const img = loadImage(SLIDE_SPRITE_SRC);
   return img;
 }
 
@@ -157,7 +174,13 @@ export function drawPlayer(
   }
 ) {
   const { m, player, laneCenterX, timeMs, zToY, animSpeed } = opts;
-  const img = getSprite();
+
+  // Stage 3A/3B visual state priority: HIT > SLIDE > AIRBORNE > RUN. Only which image/source-rect
+  // gets drawn into the same destW x destH box changes here — position, scale, and hitbox (which
+  // doesn't live here anyway) are untouched by either branch.
+  const isHit = !!player.hitUntil && Date.now() < player.hitUntil;
+  const isSlideVisual = !isHit && player.isSliding;
+  const img = isHit ? getHitSprite() : isSlideVisual ? getSlideSprite() : getSprite();
 
   // Tie the player's POSITION (not size — see PLAYER_RENDER_SCALE) to the road plane so it
   // feels grounded in the scene.
@@ -199,30 +222,64 @@ export function drawPlayer(
   // previously.
   const AIRBORNE_COL = 4;
 
-  // No hit/impact pose exists in this run cycle either. Rather than indexing into artwork that
-  // doesn't exist, hold the CONTACT frame (col 0) for the transient hit window — hitUntil still
-  // drives this purely presentational, ref-based timer (see triggerHit), it just no longer picks
-  // a distinct reaction pose. Revisit if/when dedicated hit artwork is supplied.
+  // quan-runner-hit-rear-v1.png: a dedicated 6-frame rear-view hit-reaction sheet (IMPACT ->
+  // RECOIL -> STAGGER -> RECOVERY -> SETTLE -> BACK TO RUN), same extraction discipline as the
+  // run sheet (crop/pad only, real alpha, no labels). It is a separate asset/sheet on purpose —
+  // not merged into the run sheet. HIT_DURATION_MS mirrors the existing triggerHit(player, 200)
+  // call in page.tsx (the approved, frozen transient-hit window this stage was told to fit the
+  // animation into, not change) so the 6 frames divide evenly across that same 200ms rather than
+  // introducing new gameplay timing.
+  const HIT_FRAMES = 6;
+  const HIT_DURATION_MS = 200;
+
+  // quan-runner-slide-rear-v1.png: a dedicated 6-frame rear-view slide sheet (entry -> lowering
+  // -> deep lowering -> FULL SLIDE -> rise -> return), same extraction discipline as the run/hit
+  // sheets (crop/pad only, real alpha, no labels). SLIDE_DURATION_MS mirrors the existing,
+  // frozen SLIDE_MS (page.tsx) — not a new gameplay timing. The six frames are NOT spread evenly
+  // like the hit sheet: entry (0-2) is quick, the FULL SLIDE pose (index 3, the lowest silhouette
+  // — what actually reads as "ducking under") gets by far the longest hold, then rise/return
+  // (4-5) recover before the window ends. Sequence plays once, never loops.
+  const SLIDE_FRAMES = 6;
+  const SLIDE_DURATION_MS = 650;
+  const SLIDE_FRAME_END_MS = [60, 120, 180, 480, 560, 650]; // cumulative ms each frame holds through
 
   // Sync cadence to game speed for a livelier feel
   const speedFactor = Math.min(2.2, Math.max(0.65, animSpeed ?? 1));
   const ANIM_MS = BASE_ANIM_MS / speedFactor;
 
-  const frameW = img.naturalWidth / GRID_COLS;
-  const frameH = img.naturalHeight; // single row — full sheet height is one frame
+  let frameW: number;
+  let frameH: number;
+  let sx: number;
+  const sy = 0; // both sheets are a single row — full sheet height is one frame
 
-  let col: number;
-  if (player.hitUntil && Date.now() < player.hitUntil) {
-    col = 0;
-  } else if (player.isJumping) {
-    col = AIRBORNE_COL;
+  if (isHit) {
+    frameW = img.naturalWidth / HIT_FRAMES;
+    frameH = img.naturalHeight;
+    const elapsed = HIT_DURATION_MS - (player.hitUntil! - Date.now());
+    const hitFrame = Math.min(
+      HIT_FRAMES - 1,
+      Math.max(0, Math.floor(elapsed / (HIT_DURATION_MS / HIT_FRAMES)))
+    );
+    sx = hitFrame * frameW;
+  } else if (isSlideVisual) {
+    frameW = img.naturalWidth / SLIDE_FRAMES;
+    frameH = img.naturalHeight;
+    const elapsed = SLIDE_DURATION_MS - (player.slideUntil - Date.now());
+    let slideFrame = SLIDE_FRAME_END_MS.findIndex((t) => elapsed < t);
+    if (slideFrame === -1) slideFrame = SLIDE_FRAMES - 1;
+    sx = slideFrame * frameW;
   } else {
-    const runFrame = Math.floor(timeMs / ANIM_MS) % RUN_FRAMES;
-    col = RUN_START_COL + runFrame;
+    frameW = img.naturalWidth / GRID_COLS;
+    frameH = img.naturalHeight;
+    let col: number;
+    if (player.isJumping) {
+      col = AIRBORNE_COL;
+    } else {
+      const runFrame = Math.floor(timeMs / ANIM_MS) % RUN_FRAMES;
+      col = RUN_START_COL + runFrame;
+    }
+    sx = col * frameW;
   }
-
-  const sx = col * frameW;
-  const sy = 0;
 
   const baseH = player.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND;
   const FOOT_OFFSET = 6;
@@ -232,7 +289,10 @@ export function drawPlayer(
   const destW = m.PLAYER_W * scale;
   const destH = baseH * scale;
   const x = centerX - destW / 2;
-  const bob = Math.sin((timeMs / (ANIM_MS * RUN_FRAMES)) * Math.PI * 2) * 3;
+  // Run-cycle bob is a cosmetic offset tied to the run animation's own cadence; the hit and slide
+  // sheets' own poses already carry their own motion, so skip it during those windows rather than
+  // layering an unrelated motion on top. World position (player.y) is unaffected either way.
+  const bob = isHit || isSlideVisual ? 0 : Math.sin((timeMs / (ANIM_MS * RUN_FRAMES)) * Math.PI * 2) * 3;
   const y = player.y + groundYOffset + baseH - destH - FOOT_OFFSET + bob;
 
   ctx.save();
