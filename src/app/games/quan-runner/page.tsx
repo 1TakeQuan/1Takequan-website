@@ -12,6 +12,7 @@ import {
   switchLane,
   drawPlayer,
   triggerHit,
+  triggerDeath,
   PLAYER_Z,
   type PlayerMetrics,
 } from "./player";
@@ -44,6 +45,7 @@ type GameState = {
     isSliding: boolean;
     slideUntil: number;
     hitUntil?: number;
+    deathUntil?: number;
   };
   obstacles: Array<{
     lane: number;
@@ -91,6 +93,13 @@ function comboBonus(combo: number) {
 const MAX_JUMPS = 2;
 const SLIDE_MS = 650;
 const LANE_COUNT = 3;
+
+// Stage 3C: how long the terminal (final-life) collision holds on the death/wipeout
+// presentation before the Game Over UI is revealed. Must match player.ts's DEATH_DURATION_MS
+// (same convention already used for HIT_DURATION_MS=200 there vs triggerHit(player, 200)
+// here). Gameplay itself is frozen immediately on the fatal hit (see onHit below) — this only
+// delays when the Game Over overlay is shown, so the wipeout is actually visible.
+const DEATH_DURATION_MS = 900;
 
 const GRAVITY = 0.8;
 const JUMP_POWER = -16;
@@ -229,6 +238,11 @@ export default function QuanRunnerPage() {
   // mutating score/state immediately -- gameStateRef only updates via a React
   // effect one tick later, which is too late to prevent an extra frame's drift
   const gameOverRef = useRef(false);
+  // Stage 3C: wall-clock timestamp (Date.now()-based, same convention as hitUntil/slideUntil)
+  // for when the delayed Game Over UI reveal should fire, or null when none is pending.
+  // gameOverRef above is still set immediately on the fatal hit (freezing gameplay); this ref
+  // only controls when endGame() actually runs, so the death presentation is visible first.
+  const pendingGameOverAtRef = useRef<number | null>(null);
   const obstacleCooldownRef = useRef<number>(900);
   const coinCooldownRef = useRef<number>(650);
 
@@ -393,18 +407,23 @@ export default function QuanRunnerPage() {
     setGameState("gameOver");
   }, []);
 
+  // Stage 3C: gameOverRef is checked here too (not just gameStateRef), because it is set the
+  // instant the fatal hit occurs, while gameState only flips to "gameOver" once the delayed
+  // death presentation finishes (see onHit / pendingGameOverAtRef below). Without this, input
+  // could still change the outcome (switch lanes, jump, slide) during that presentation
+  // window, even though the collision result is already locked in.
   const doLane = (dir: -1 | 1) => {
-    if (gameStateRef.current !== "playing" || pausedRef.current) return;
+    if (gameStateRef.current !== "playing" || pausedRef.current || gameOverRef.current) return;
     switchLane(gameRef.current.player, dir, LANE_COUNT);
   };
 
   const doSlide = () => {
-    if (gameStateRef.current !== "playing" || pausedRef.current) return;
+    if (gameStateRef.current !== "playing" || pausedRef.current || gameOverRef.current) return;
     startSlide(gameRef.current.player, metrics());
   };
 
   const doJump = () => {
-    if (gameStateRef.current !== "playing" || pausedRef.current) return;
+    if (gameStateRef.current !== "playing" || pausedRef.current || gameOverRef.current) return;
     playerJump(gameRef.current.player, metrics());
   };
 
@@ -454,6 +473,7 @@ export default function QuanRunnerPage() {
 
     lastTickRef.current = performance.now();
     gameOverRef.current = false;
+    pendingGameOverAtRef.current = null;
     obstacleCooldownRef.current = 250;
     coinCooldownRef.current = 220;
 
@@ -507,8 +527,6 @@ export default function QuanRunnerPage() {
       const game = gameRef.current;
       const m = metrics();
       road.setViewport(m.w, m.h);
-
-      let triggerGameOver = false;
 
       game.time += dt;
 
@@ -578,12 +596,24 @@ export default function QuanRunnerPage() {
           game.lives -= 1;
           game.hitFlash = 1;
           game.invincibleUntil = now + 1100;
-          triggerHit(game.player, 200); // brief visual-only hit reaction, see player.ts
 
           game.combo = 0;
           game.comboUntil = 0;
 
-          if (game.lives <= 0) triggerGameOver = true;
+          if (game.lives <= 0) {
+            // Stage 3C: terminal collision — the death/wipeout reaction replaces the ordinary
+            // hit reaction for THIS hit only (ordinary, non-fatal hits below are unaffected).
+            // Freeze gameplay immediately (updateGame's own guard at the top of this function
+            // returns early once gameOverRef is true) so nothing else about the outcome can
+            // change; only revealing the Game Over UI is delayed, via pendingGameOverAtRef,
+            // so the death presentation is actually visible first. endGame() itself is
+            // unchanged — only when it's called moves.
+            triggerDeath(game.player, DEATH_DURATION_MS);
+            gameOverRef.current = true;
+            pendingGameOverAtRef.current = now + DEATH_DURATION_MS;
+          } else {
+            triggerHit(game.player, 200); // brief visual-only hit reaction, see player.ts
+          }
         },
         onCoin: (coin) => {
           coin.collected = true;
@@ -637,14 +667,21 @@ export default function QuanRunnerPage() {
       game.internalScore = computeScore(game);
       scoreRef.current = game.internalScore;
       if (game.frame % 10 === 0) setScore(game.internalScore);
-
-      if (triggerGameOver) {
-        endGame();
-      }
     };
 
     const render = () => {
       updateGame();
+
+      // Stage 3C: reveal the Game Over UI once the death presentation window has elapsed.
+      // Gameplay was already frozen immediately when the fatal hit occurred (gameOverRef, set
+      // inside onHit above) — this only decides when endGame() itself runs, so render() (which
+      // keeps going every frame regardless of gameOverRef) has a chance to keep drawing the
+      // death animation via wall-clock time first. endGame() is unchanged and still idempotent
+      // to call once.
+      if (pendingGameOverAtRef.current !== null && Date.now() >= pendingGameOverAtRef.current) {
+        pendingGameOverAtRef.current = null;
+        endGame();
+      }
 
       const m = metrics();
       const dpr = Math.max(1, window.devicePixelRatio || 1);

@@ -13,6 +13,12 @@ export type Player = {
     // slideUntil). Set by triggerHit() below; read by drawPlayer to pick the brief HURT-row
     // reaction frames. Never read by physics/collision — purely presentational.
     hitUntil?: number;
+
+    // Stage 3C: transient visual-only death/wipeout window, same timestamp convention as
+    // hitUntil. Set by triggerDeath() below, only for the terminal (final-life) collision —
+    // never for an ordinary hit. Purely presentational: the game-over outcome/timing is
+    // decided by page.tsx independently of this field.
+    deathUntil?: number;
 };
 
 export type PlayerMetrics = {
@@ -77,6 +83,14 @@ export function startSlide(player: Player, m: PlayerMetrics) {
 // collision.
 export function triggerHit(player: Player, durationMs: number) {
     player.hitUntil = Date.now() + durationMs;
+}
+
+// Stage 3C: starts the brief visual-only death/wipeout window (see drawPlayer's isDying
+// branch). Same timestamp convention as triggerHit above — purely presentational. Callers
+// should use this ONLY for the terminal (final-life) collision, in place of triggerHit for
+// that specific hit — not in addition to it. Never read by physics or collision.
+export function triggerDeath(player: Player, durationMs: number) {
+    player.deathUntil = Date.now() + durationMs;
 }
 
 export function switchLane(player: Player, dir: -1 | 1, laneCount: number) {
@@ -144,6 +158,9 @@ const HIT_SPRITE_SRC = "/games/quan-runner/quan-runner-hit-rear-v1.png";
 // Stage 3B: dedicated rear-view slide sheet (entry -> lowering -> deep lowering -> full slide
 // -> rise -> return), same "separate asset, not merged" approach as the hit sheet.
 const SLIDE_SPRITE_SRC = "/games/quan-runner/quan-runner-slide-rear-v1.png";
+// Stage 3C: dedicated rear-view death/wipeout sheet (final impact -> hard recoil -> loss of
+// balance -> fall -> near-down -> down/settle), same "separate asset, not merged" approach.
+const DEATH_SPRITE_SRC = "/games/quan-runner/quan-runner-death-rear-v1.png";
 
 function getSprite() {
   const img = loadImage(SPRITE_SRC);
@@ -157,6 +174,11 @@ function getHitSprite() {
 
 function getSlideSprite() {
   const img = loadImage(SLIDE_SPRITE_SRC);
+  return img;
+}
+
+function getDeathSprite() {
+  const img = loadImage(DEATH_SPRITE_SRC);
   return img;
 }
 
@@ -175,12 +197,27 @@ export function drawPlayer(
 ) {
   const { m, player, laneCenterX, timeMs, zToY, animSpeed } = opts;
 
-  // Stage 3A/3B visual state priority: HIT > SLIDE > AIRBORNE > RUN. Only which image/source-rect
-  // gets drawn into the same destW x destH box changes here — position, scale, and hitbox (which
-  // doesn't live here anyway) are untouched by either branch.
-  const isHit = !!player.hitUntil && Date.now() < player.hitUntil;
-  const isSlideVisual = !isHit && player.isSliding;
-  const img = isHit ? getHitSprite() : isSlideVisual ? getSlideSprite() : getSprite();
+  // Stage 3A/3B/3C visual state priority: DEATH > HIT > SLIDE > AIRBORNE > RUN. Only which
+  // image/source-rect gets drawn into the same destW x destH box changes here — position,
+  // scale, and hitbox (which doesn't live here anyway) are untouched by any of these branches.
+  //
+  // Unlike hitUntil/slideUntil, isDying deliberately does NOT expire once the death window's
+  // elapsed time passes deathUntil: triggerDeath is only ever called on the terminal (final-
+  // life) collision, so there is no "return to gameplay" to expire back into — the frame-index
+  // math below already clamps to the last (DOWN/SETTLE) frame once elapsed exceeds it, so this
+  // just holds that pose instead of falling through to HIT/SLIDE/RUN for the frame(s) between
+  // the death window ending and page.tsx's delayed Game Over overlay actually mounting.
+  // deathUntil itself is only ever cleared back to undefined on the next restart.
+  const isDying = !!player.deathUntil;
+  const isHit = !isDying && !!player.hitUntil && Date.now() < player.hitUntil;
+  const isSlideVisual = !isDying && !isHit && player.isSliding;
+  const img = isDying
+    ? getDeathSprite()
+    : isHit
+    ? getHitSprite()
+    : isSlideVisual
+    ? getSlideSprite()
+    : getSprite();
 
   // Tie the player's POSITION (not size — see PLAYER_RENDER_SCALE) to the road plane so it
   // feels grounded in the scene.
@@ -243,6 +280,23 @@ export function drawPlayer(
   const SLIDE_DURATION_MS = 650;
   const SLIDE_FRAME_END_MS = [60, 120, 180, 480, 560, 650]; // cumulative ms each frame holds through
 
+  // quan-runner-death-rear-v1.png: a dedicated 6-frame rear-view death/wipeout sheet (final
+  // impact -> hard recoil -> loss of balance -> fall -> near-down -> down/settle), same
+  // extraction discipline as the run/hit/slide sheets (crop/pad only, real alpha, no labels).
+  // This is presentational only, purely additive to the existing HIT window it visually
+  // replaces for the terminal collision (see triggerDeath's caller in page.tsx) — it does not
+  // change collision/lives/invulnerability, and it does not fire on ordinary (non-fatal) hits,
+  // which keep using the existing approved HIT sheet unchanged. DEATH_DURATION_MS is the
+  // presentation window page.tsx delays revealing the Game Over UI for; it is intentionally
+  // longer than HIT_DURATION_MS (200ms) so the terminal wipeout reads as heavier/more final
+  // than an ordinary stumble, while staying well short of feeling sluggish. Like the slide
+  // sheet, frames are NOT spread evenly: entry (impact/recoil) is quick, and the final
+  // DOWN/SETTLE pose (index 5) gets by far the longest hold since that's the frame still on
+  // screen right up until Game Over appears. Sequence plays once, never loops.
+  const DEATH_FRAMES = 6;
+  const DEATH_DURATION_MS = 900;
+  const DEATH_FRAME_END_MS = [100, 220, 340, 460, 580, 900]; // cumulative ms each frame holds through
+
   // Sync cadence to game speed for a livelier feel
   const speedFactor = Math.min(2.2, Math.max(0.65, animSpeed ?? 1));
   const ANIM_MS = BASE_ANIM_MS / speedFactor;
@@ -252,7 +306,14 @@ export function drawPlayer(
   let sx: number;
   const sy = 0; // both sheets are a single row — full sheet height is one frame
 
-  if (isHit) {
+  if (isDying) {
+    frameW = img.naturalWidth / DEATH_FRAMES;
+    frameH = img.naturalHeight;
+    const elapsed = DEATH_DURATION_MS - (player.deathUntil! - Date.now());
+    let deathFrame = DEATH_FRAME_END_MS.findIndex((t) => elapsed < t);
+    if (deathFrame === -1) deathFrame = DEATH_FRAMES - 1;
+    sx = deathFrame * frameW;
+  } else if (isHit) {
     frameW = img.naturalWidth / HIT_FRAMES;
     frameH = img.naturalHeight;
     const elapsed = HIT_DURATION_MS - (player.hitUntil! - Date.now());
@@ -289,10 +350,11 @@ export function drawPlayer(
   const destW = m.PLAYER_W * scale;
   const destH = baseH * scale;
   const x = centerX - destW / 2;
-  // Run-cycle bob is a cosmetic offset tied to the run animation's own cadence; the hit and slide
-  // sheets' own poses already carry their own motion, so skip it during those windows rather than
-  // layering an unrelated motion on top. World position (player.y) is unaffected either way.
-  const bob = isHit || isSlideVisual ? 0 : Math.sin((timeMs / (ANIM_MS * RUN_FRAMES)) * Math.PI * 2) * 3;
+  // Run-cycle bob is a cosmetic offset tied to the run animation's own cadence; the hit, slide,
+  // and death sheets' own poses already carry their own motion, so skip it during those windows
+  // rather than layering an unrelated motion on top. World position (player.y) is unaffected
+  // either way.
+  const bob = isDying || isHit || isSlideVisual ? 0 : Math.sin((timeMs / (ANIM_MS * RUN_FRAMES)) * Math.PI * 2) * 3;
   const y = player.y + groundYOffset + baseH - destH - FOOT_OFFSET + bob;
 
   ctx.save();
