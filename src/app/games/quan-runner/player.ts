@@ -8,6 +8,11 @@ export type Player = {
 
     isSliding: boolean;
     slideUntil: number;
+
+    // Transient visual-only hit reaction window (wall-clock ms timestamp, same convention as
+    // slideUntil). Set by triggerHit() below; read by drawPlayer to pick the brief HURT-row
+    // reaction frames. Never read by physics/collision — purely presentational.
+    hitUntil?: number;
 };
 
 export type PlayerMetrics = {
@@ -64,6 +69,14 @@ export function startSlide(player: Player, m: PlayerMetrics) {
     // allow slide ANYTIME (even mid-air). Hitbox will shorten immediately.
     player.isSliding = true;
     player.slideUntil = Date.now() + m.SLIDE_MS;
+}
+
+// Stage 2B: starts the brief visual-only hit reaction window (see drawPlayer's hitUntil check,
+// which holds the CONTACT run frame — no dedicated hit pose exists in the current sheet). Same
+// timestamp convention as startSlide above — purely presentational, never read by physics or
+// collision.
+export function triggerHit(player: Player, durationMs: number) {
+    player.hitUntil = Date.now() + durationMs;
 }
 
 export function switchLane(player: Player, dir: -1 | 1, laneCount: number) {
@@ -123,7 +136,7 @@ export function getPlayerHitbox(player: Player, m: PlayerMetrics) {
 }
 
 import { loadImage } from "./loadImage";
-const SPRITE_SRC = "/games/quan-runner/quan-runner-sprite.png";
+const SPRITE_SRC = "/games/quan-runner/quan-runner-run-rear-v1.png";
 
 function getSprite() {
   const img = loadImage(SPRITE_SRC);
@@ -166,24 +179,50 @@ export function drawPlayer(
     return;
   }
 
-  // Lock to RUN animation row and loop a fixed frame range (no pose switching)
-  const GRID_COLS = 12;
-  const GRID_ROWS = 8;
-  const RUN_ROW = 2;          // row for run poses
-  const RUN_START_COL = 0;    // first run frame (inclusive)
-  const RUN_FRAMES = 6;       // how many columns to cycle through (from start)
+  // quan-runner-run-rear-v1.png: a normalized production sheet built from the user-supplied
+  // REAR-VIEW 8-pose reference artwork (contact/compression/passing/lift/flight/passing/
+  // compression/contact — a full running-stride cycle, viewed from behind so Quan visually
+  // runs up the road/away from the camera, matching this game's vertical-runner perspective).
+  // It is a single row of 8 EQUAL-SIZED cells, extracted (not redrawn) from the source at
+  // native resolution using real alpha transparency — no text/labels/lines were ever present
+  // in this source, so nothing needed cropping out beyond the natural gaps between poses. Each
+  // cell keeps the same shared vertical window from the source, so the character's own natural
+  // bob (feet drop on CONTACT, rise on FLIGHT) is preserved without any extra animation logic
+  // here.
+  const GRID_COLS = 8;
+  const RUN_START_COL = 0;
+  const RUN_FRAMES = 8;
   const BASE_ANIM_MS = 95;    // baseline per-frame duration
+
+  // No dedicated jump pose exists in this run cycle — hold the FLIGHT frame (col 4, both feet
+  // airborne) while jumping, same "hold a real frame instead of fabricating one" approach used
+  // previously.
+  const AIRBORNE_COL = 4;
+
+  // No hit/impact pose exists in this run cycle either. Rather than indexing into artwork that
+  // doesn't exist, hold the CONTACT frame (col 0) for the transient hit window — hitUntil still
+  // drives this purely presentational, ref-based timer (see triggerHit), it just no longer picks
+  // a distinct reaction pose. Revisit if/when dedicated hit artwork is supplied.
 
   // Sync cadence to game speed for a livelier feel
   const speedFactor = Math.min(2.2, Math.max(0.65, animSpeed ?? 1));
   const ANIM_MS = BASE_ANIM_MS / speedFactor;
 
   const frameW = img.naturalWidth / GRID_COLS;
-  const frameH = img.naturalHeight / GRID_ROWS;
+  const frameH = img.naturalHeight; // single row — full sheet height is one frame
 
-  const runFrame = Math.floor(timeMs / ANIM_MS) % RUN_FRAMES;
-  const sx = (RUN_START_COL + runFrame) * frameW;
-  const sy = RUN_ROW * frameH;
+  let col: number;
+  if (player.hitUntil && Date.now() < player.hitUntil) {
+    col = 0;
+  } else if (player.isJumping) {
+    col = AIRBORNE_COL;
+  } else {
+    const runFrame = Math.floor(timeMs / ANIM_MS) % RUN_FRAMES;
+    col = RUN_START_COL + runFrame;
+  }
+
+  const sx = col * frameW;
+  const sy = 0;
 
   const baseH = player.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND;
   const FOOT_OFFSET = 6;

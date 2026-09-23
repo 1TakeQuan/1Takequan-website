@@ -11,6 +11,7 @@ import {
   startSlide,
   switchLane,
   drawPlayer,
+  triggerHit,
   PLAYER_Z,
   type PlayerMetrics,
 } from "./player";
@@ -42,6 +43,7 @@ type GameState = {
     lane: number;
     isSliding: boolean;
     slideUntil: number;
+    hitUntil?: number;
   };
   obstacles: Array<{
     lane: number;
@@ -576,6 +578,7 @@ export default function QuanRunnerPage() {
           game.lives -= 1;
           game.hitFlash = 1;
           game.invincibleUntil = now + 1100;
+          triggerHit(game.player, 200); // brief visual-only hit reaction, see player.ts
 
           game.combo = 0;
           game.comboUntil = 0;
