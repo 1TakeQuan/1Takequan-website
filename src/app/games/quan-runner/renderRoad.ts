@@ -4,6 +4,7 @@ export type RoadFns = {
     laneEdgeX: (edgeIndex: number, z: number) => number;
     zToY: (z: number) => number;
     zToScale: (z: number) => number;
+    setViewport: (w: number, h: number) => void;
     drawRoad3D: (
         ctx: CanvasRenderingContext2D,
         opts: { w: number; h: number; laneCount: number; playerLane: number; timeMs: number; speed: number }
@@ -11,61 +12,63 @@ export type RoadFns = {
 };
 
 export function makeRoad(laneCount: number): RoadFns {
+    // Current viewport, shared by the projection functions and drawRoad3D.
+    // Set via setViewport() so the projection functions are correct even
+    // before the first draw call (e.g. for same-frame collision checks).
+    let vw = 0;
+    let vh = 0;
+
     function roadBoundsAtZ(z: number) {
-        // Placeholder; actual values set in drawRoad3D
-        return { left: 0, right: 0, y: 0, bottomY: 0, topY: 0 };
+        const bottomY = vh - 60;
+        const topY = vh * 0.18;          // raise horizon for more vanishing
+        const bottomLeft = vw * 0.14;
+        const bottomRight = vw * 0.86;
+        const topLeft = vw * 0.40;       // narrower top to strengthen convergence
+        const topRight = vw * 0.60;
+        const left = topLeft + (bottomLeft - topLeft) * (1 - z);
+        const right = topRight + (bottomRight - topRight) * (1 - z);
+        const y = topY + (bottomY - topY) * (1 - z);
+        return { left, right, y, bottomY, topY };
     }
 
-    const api: RoadFns = {
-        roadBoundsAtZ: (_z) => ({ left: 0, right: 0, y: 0, bottomY: 0, topY: 0 }),
-        laneCenterX: (_lane, _z) => 0,
-        laneEdgeX: (_edgeIndex, _z) => 0,
-        zToY: (_z) => 0,
-        zToScale: (_z) => 1,
+    function laneEdgeX(edgeIndex: number, z: number) {
+        const { left, right } = roadBoundsAtZ(z);
+        const laneW = (right - left) / laneCount;
+        return left + laneW * edgeIndex;
+    }
+
+    function laneCenterX(lane: number, z: number) {
+        const { left, right } = roadBoundsAtZ(z);
+        const laneW = (right - left) / laneCount;
+        return left + laneW * (lane + 0.5);
+    }
+
+    function zToY(z: number) {
+        return roadBoundsAtZ(z).y;
+    }
+
+    function zToScale(z: number) {
+        return 0.25 + (1 - z) * 2.2;    // stronger shrink with distance
+    }
+
+    function setViewport(w: number, h: number) {
+        vw = w;
+        vh = h;
+    }
+
+    return {
+        roadBoundsAtZ,
+        laneCenterX,
+        laneEdgeX,
+        zToY,
+        zToScale,
+        setViewport,
         drawRoad3D(ctx, opts) {
-            const { w, h, laneCount, playerLane, timeMs, speed } = opts;
+            const { w, h, playerLane, timeMs, speed } = opts;
+            setViewport(w, h);
 
-            function _roadBoundsAtZ(z: number) {
-                const bottomY = h - 60;
-                const topY = h * 0.18;          // raise horizon for more vanishing
-                const bottomLeft = w * 0.14;
-                const bottomRight = w * 0.86;
-                const topLeft = w * 0.40;       // narrower top to strengthen convergence
-                const topRight = w * 0.60;
-                const left = topLeft + (bottomLeft - topLeft) * (1 - z);
-                const right = topRight + (bottomRight - topRight) * (1 - z);
-                const y = topY + (bottomY - topY) * (1 - z);
-                return { left, right, y, bottomY, topY };
-            }
-
-            function _laneEdgeX(edgeIndex: number, z: number) {
-                const { left, right } = _roadBoundsAtZ(z);
-                const laneW = (right - left) / laneCount;
-                return left + laneW * edgeIndex;
-            }
-
-            function _laneCenterX(lane: number, z: number) {
-                const { left, right } = _roadBoundsAtZ(z);
-                const laneW = (right - left) / laneCount;
-                return left + laneW * (lane + 0.5);
-            }
-
-            function _zToY(z: number) {
-                return _roadBoundsAtZ(z).y;
-            }
-
-            function _zToScale(z: number) {
-                return 0.25 + (1 - z) * 2.2;    // stronger shrink with distance
-            }
-
-            api.roadBoundsAtZ = _roadBoundsAtZ;
-            api.laneEdgeX = _laneEdgeX;
-            api.laneCenterX = _laneCenterX;
-            api.zToY = _zToY;
-            api.zToScale = _zToScale;
-
-            const far = _roadBoundsAtZ(1);
-            const near = _roadBoundsAtZ(0);
+            const far = roadBoundsAtZ(1);
+            const near = roadBoundsAtZ(0);
 
             ctx.save();
             ctx.beginPath();
@@ -90,10 +93,10 @@ export function makeRoad(laneCount: number): RoadFns {
             ctx.stroke();
 
             ctx.beginPath();
-            const farL = _laneEdgeX(playerLane, 1);
-            const farR = _laneEdgeX(playerLane + 1, 1);
-            const nearL = _laneEdgeX(playerLane, 0);
-            const nearR = _laneEdgeX(playerLane + 1, 0);
+            const farL = laneEdgeX(playerLane, 1);
+            const farR = laneEdgeX(playerLane + 1, 1);
+            const nearL = laneEdgeX(playerLane, 0);
+            const nearR = laneEdgeX(playerLane + 1, 0);
             ctx.moveTo(farL, far.y);
             ctx.lineTo(farR, far.y);
             ctx.lineTo(nearR, near.y);
@@ -108,8 +111,8 @@ export function makeRoad(laneCount: number): RoadFns {
 
             ctx.lineWidth = 2;
             for (let i = 1; i < laneCount; i++) {
-                const xFar = _laneEdgeX(i, 1);
-                const xNear = _laneEdgeX(i, 0);
+                const xFar = laneEdgeX(i, 1);
+                const xNear = laneEdgeX(i, 0);
                 ctx.strokeStyle = "rgba(255,195,160,0.35)";
                 ctx.setLineDash([10, 14]);
                 ctx.beginPath();
@@ -125,8 +128,8 @@ export function makeRoad(laneCount: number): RoadFns {
                     const t = timeMs * 0.001;
                     const moving = (t * (0.8 + speed * 0.12) + lane * 0.07) % 1;
                     const zz = 1 - ((z + moving) % 1);
-                    const b = _roadBoundsAtZ(zz);
-                    const x = _laneCenterX(lane, zz);
+                    const b = roadBoundsAtZ(zz);
+                    const x = laneCenterX(lane, zz);
                     const scale = 0.15 + (1 - zz) * 2.2; // was 0.25 + (1-zz)*1.2
                     const dashH = 6 * scale;
                     const dashW = 2.2 * scale;
@@ -158,6 +161,4 @@ export function makeRoad(laneCount: number): RoadFns {
             ctx.restore();
         },
     };
-
-    return api;
 }

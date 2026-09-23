@@ -11,6 +11,7 @@ import {
   startSlide,
   switchLane,
   drawPlayer,
+  PLAYER_Z,
   type PlayerMetrics,
 } from "./player";
 import { spawnCoin, stepDepth, checkCollisions, drawObstacles, drawCoins } from "./obstacles";
@@ -168,6 +169,8 @@ function spawnObstaclePack(game: GameState, laneCount: number, tier: Tier) {
       lane,
       z: 1,
       type,
+      // Bug fix: reverted to the original HEAD sizes (must match obstacles.ts's
+      // spawnObstacle) — see that file's comment.
       width: 44,
       height: type === "block" ? 46 : 48,
     });
@@ -211,10 +214,19 @@ export default function QuanRunnerPage() {
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   useEffect(() => {
+    const wasPaused = pausedRef.current;
     pausedRef.current = paused;
+    if (wasPaused && !paused) {
+      // resuming: don't let the paused wall-clock gap become this frame's simulation dt
+      lastTickRef.current = performance.now();
+    }
   }, [paused]);
 
   const lastTickRef = useRef<number>(0);
+  // set synchronously the instant game-over is decided, so updateGame() stops
+  // mutating score/state immediately -- gameStateRef only updates via a React
+  // effect one tick later, which is too late to prevent an extra frame's drift
+  const gameOverRef = useRef(false);
   const obstacleCooldownRef = useRef<number>(900);
   const coinCooldownRef = useRef<number>(650);
 
@@ -311,6 +323,42 @@ export default function QuanRunnerPage() {
     };
   }, []);
 
+  // Bug fix: this is now the ONE authoritative place canvas.width/height (the drawing
+  // buffer), canvas.style.width/height (the displayed CSS size), and the ctx transform are
+  // set together. Previously startGame() duplicated only the buffer half of this (via its
+  // own getBoundingClientRect()+canvas.width/height), leaving canvas.style.width/height at
+  // whatever an earlier resize() call had set — so after a restart, the game's internal
+  // coordinate space (buffer/dpr) could diverge from what was actually displayed, and the
+  // browser would implicitly stretch the canvas content to fit the mismatched CSS box.
+  const resizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    // Maintain a 3:2 aspect ratio (change to 16/9 for widescreen)
+    const aspect = 3 / 2;
+    let width = wrap.clientWidth;
+    let height = Math.round(width / aspect);
+
+    // If height is too big for the viewport, shrink width/height
+    const maxHeight = Math.round(window.innerHeight * 0.7);
+    if (height > maxHeight) {
+      height = maxHeight;
+      width = Math.round(height * aspect);
+    }
+
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+
+    // match CSS size to keep the picture undistorted
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }, []);
+
   useEffect(() => {
     const saved = localStorage.getItem("quan-runner-high-score");
     if (saved) {
@@ -330,6 +378,7 @@ export default function QuanRunnerPage() {
 }, []);
 
   const endGame = useCallback(() => {
+    gameOverRef.current = true;
     const finalScore = scoreRef.current;
     setScore(finalScore);
 
@@ -362,12 +411,10 @@ export default function QuanRunnerPage() {
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
 
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const rect = wrap.getBoundingClientRect();
-    canvas.width = Math.floor(rect.width * dpr);
-    canvas.height = Math.floor(rect.height * dpr);
-    const ctx = canvas.getContext("2d");
-    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Bug fix: was setting canvas.width/height directly here, independent of resizeCanvas()
+    // — see that function's comment for why that could desync the buffer from the displayed
+    // CSS size. Routing through the same authoritative path keeps both in sync on restart.
+    resizeCanvas();
 
     const m = metrics();
 
@@ -404,6 +451,7 @@ export default function QuanRunnerPage() {
     };
 
     lastTickRef.current = performance.now();
+    gameOverRef.current = false;
     obstacleCooldownRef.current = 250;
     coinCooldownRef.current = 220;
 
@@ -413,54 +461,25 @@ export default function QuanRunnerPage() {
     setScore(0);
     setPaused(false);
     setGameState("playing");
-  }, [metrics]);
+  }, [metrics, resizeCanvas]);
 
   // resize
   useEffect(() => {
-    const resize = () => {
-      const canvas = canvasRef.current;
-      const wrap = wrapRef.current;
-      if (!canvas || !wrap) return;
-
-      // Maintain a 3:2 aspect ratio (change to 16/9 for widescreen)
-      const aspect = 3 / 2;
-      let width = wrap.clientWidth;
-      let height = Math.round(width / aspect);
-
-      // If height is too big for the viewport, shrink width/height
-      const maxHeight = Math.round(window.innerHeight * 0.7);
-      if (height > maxHeight) {
-        height = maxHeight;
-        width = Math.round(height * aspect);
-      }
-
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(height * dpr);
-
-      // match CSS size to keep the picture undistorted
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-
-    resize();
+    resizeCanvas();
     const wrap = wrapRef.current;
     if (!wrap) return;
 
-    const ro = new ResizeObserver(resize);
+    const ro = new ResizeObserver(resizeCanvas);
     ro.observe(wrap);
 
-    window.addEventListener("orientationchange", resize);
-    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", resizeCanvas);
+    window.addEventListener("resize", resizeCanvas);
     return () => {
       ro.disconnect();
-      window.removeEventListener("orientationchange", resize);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("orientationchange", resizeCanvas);
+      window.removeEventListener("resize", resizeCanvas);
     };
-  }, []);
+  }, [resizeCanvas]);
 
   // main loop
   useEffect(() => {
@@ -474,6 +493,7 @@ export default function QuanRunnerPage() {
 
     const updateGame = () => {
       if (gameStateRef.current !== "playing") return;
+      if (gameOverRef.current) return;
       if (pausedRef.current) return;
 
       const now = performance.now();
@@ -484,18 +504,19 @@ export default function QuanRunnerPage() {
 
       const game = gameRef.current;
       const m = metrics();
+      road.setViewport(m.w, m.h);
+
+      let triggerGameOver = false;
 
       game.time += dt;
 
       // movement / distance
       game.distance += (dt / 1000) * game.speed * 28;
 
-      // compute score ONCE
+      // compute a working score for this frame's difficulty/milestone inputs.
+      // The authoritative, leaderboard-facing score is finalized at the end of
+      // this function, after this frame's coin/near-miss/hit events are applied.
       game.internalScore = computeScore(game);
-      scoreRef.current = game.internalScore;
-
-      // throttle React state updates
-      if (game.frame % 10 === 0) setScore(game.internalScore);
 
       // earn +1 life every 5k points
       const nextMilestone = (game.lifeMilestone + 1) * 5000;
@@ -534,7 +555,7 @@ export default function QuanRunnerPage() {
       }
 
       // advance world
-      stepDepth(game.obstacles, game.coins, game.speed);
+      stepDepth(game.obstacles, game.coins, game.speed, dt / 1000);
 
       // player
       updatePlayer(game.player, dt / 1000, m);
@@ -559,7 +580,7 @@ export default function QuanRunnerPage() {
           game.combo = 0;
           game.comboUntil = 0;
 
-          if (game.lives <= 0) endGame();
+          if (game.lives <= 0) triggerGameOver = true;
         },
         onCoin: (coin) => {
           coin.collected = true;
@@ -599,8 +620,24 @@ export default function QuanRunnerPage() {
         }
       }
 
+      // the combo indicator should disappear once its window has lapsed,
+      // not linger at its last value until the next coin pickup
+      if (game.comboUntil && game.combo !== 0 && Date.now() > game.comboUntil) {
+        game.combo = 0;
+      }
+
       game.comboGlow = Math.max(0, (game.comboGlow ?? 0) - 0.06);
       game.frame++;
+
+      // finalize the authoritative score now that this frame's coin pickups,
+      // near-miss bonuses, and hits have all been applied
+      game.internalScore = computeScore(game);
+      scoreRef.current = game.internalScore;
+      if (game.frame % 10 === 0) setScore(game.internalScore);
+
+      if (triggerGameOver) {
+        endGame();
+      }
     };
 
     const render = () => {
@@ -643,13 +680,16 @@ export default function QuanRunnerPage() {
         zToScale: road.zToScale,
       });
 
-      drawPlayer(ctx, {
-        m,
-        player: g.player,
-        laneCenterX: road.laneCenterX,
-        logoImg: logoImgRef.current,
-        timeMs: g.time,
-      });
+        drawPlayer(ctx, {
+          m,
+          player: g.player,
+          laneCenterX: road.laneCenterX,
+          zToScale: road.zToScale,
+          zToY: road.zToY,
+          animSpeed: g.speed,
+          logoImg: logoImgRef.current,
+          timeMs: g.time,
+        });
 
       drawHUD(ctx, {
         score: g.internalScore,
@@ -734,7 +774,7 @@ export default function QuanRunnerPage() {
   }, [metrics, endGame, pushPopup]);
 
   return (
-    <div ref={wrapRef} className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
       <div className="max-w-4xl w-full">
         <Link href="/games" className="inline-flex items-center gap-2 text-red-500 hover:text-red-400 mb-6 transition">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -757,7 +797,7 @@ export default function QuanRunnerPage() {
         </h1>
         <p className="text-gray-400 mb-6">Run through LA, dodge obstacles, and collect coins!</p>
 
-        <div className="relative bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
+        <div ref={wrapRef} className="relative bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
           <canvas
             ref={canvasRef}
             width={480}

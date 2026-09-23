@@ -27,6 +27,27 @@ export type PlayerMetrics = {
     JUMP_POWER: number;
 };
 
+  // Anchor depth for the player relative to the road projection (0 = camera, 1 = horizon).
+  // Used only for POSITION (ground line, lane center) — see drawPlayer / checkCollisions.
+  // It must never multiply into the player's render/collision SIZE; that's the job of
+  // PLAYER_RENDER_SCALE below, kept as the one authoritative size constant.
+  export const PLAYER_Z = 0.06;
+
+  // Bug fix: the previous (unfinished) version multiplied a fixed sprite scale (1.9x) by
+  // zToScale(PLAYER_Z) (~2.3x), compounding to ~4.4x total and rendering the player taller
+  // than the canvas itself. This is now the ONE place player render size is decided —
+  // perspective (PLAYER_Z) still decides where the player sits on the road, never how big
+  // it's drawn.
+  export const PLAYER_RENDER_SCALE = 1.2;
+  export const PLAYER_RENDER_SCALE_SLIDE = 0.95;
+
+  // Collision box is intentionally smaller than the rendered sprite (forgiving arcade
+  // collision, not a pixel-perfect one): ~60% of the visual width — the core torso, not the
+  // full arm-swing/clothing silhouette — and ~75% of the visual height — the body/feet
+  // region, excluding the head/hair bob overshoot at the top of the sprite.
+  export const PLAYER_HITBOX_WIDTH_RATIO = 0.6;
+  export const PLAYER_HITBOX_HEIGHT_RATIO = 0.75;
+
 export function createPlayer(m: PlayerMetrics, laneCount: number): Player {
     return {
         lane: Math.floor(laneCount / 2),
@@ -57,6 +78,12 @@ export function jump(player: Player, m: PlayerMetrics) {
     player.jumpsRemaining--;
 }
 
+// GRAVITY and JUMP_POWER are tuned as "per 60fps-frame" values. Scaling each
+// update by elapsed time relative to a 60fps frame reproduces the original
+// per-frame integration exactly at 60fps, while staying correct at any other
+// frame rate.
+const REFERENCE_FPS = 60;
+
 export function updatePlayer(player: Player, dt: number, m: PlayerMetrics) {
     // slide expiration
     if (player.isSliding && Date.now() > player.slideUntil) {
@@ -65,8 +92,9 @@ export function updatePlayer(player: Player, dt: number, m: PlayerMetrics) {
 
     // gravity + vertical motion
     if (player.isJumping) {
-        player.velocityY += m.GRAVITY;
-        player.y += player.velocityY;
+        const framesElapsed = dt * REFERENCE_FPS;
+        player.velocityY += m.GRAVITY * framesElapsed;
+        player.y += player.velocityY * framesElapsed;
 
         // landing line is ALWAYS the same groundY (lanes are horizontal, not vertical)
         const standH = player.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND;
@@ -108,12 +136,21 @@ export function drawPlayer(
     m: PlayerMetrics;
     player: Player;
     laneCenterX: (lane: number, z: number) => number;
+    zToScale?: (z: number) => number;
+    zToY?: (z: number) => number;
+    animSpeed?: number; // external speed factor to sync cadence
     logoImg?: HTMLImageElement | null;
     timeMs: number;
   }
 ) {
-  const { m, player, laneCenterX, timeMs } = opts;
+  const { m, player, laneCenterX, timeMs, zToY, animSpeed } = opts;
   const img = getSprite();
+
+  // Tie the player's POSITION (not size — see PLAYER_RENDER_SCALE) to the road plane so it
+  // feels grounded in the scene.
+  const groundY = zToY ? zToY(PLAYER_Z) : m.groundY;
+  const centerX = laneCenterX(player.lane, PLAYER_Z);
+  const groundYOffset = groundY - m.groundY;
 
   if (!img || !img.complete || img.naturalWidth === 0) {
     const x = laneCenterX(player.lane, 0);
@@ -129,52 +166,42 @@ export function drawPlayer(
     return;
   }
 
+  // Lock to RUN animation row and loop a fixed frame range (no pose switching)
   const GRID_COLS = 12;
   const GRID_ROWS = 8;
+  const RUN_ROW = 2;          // row for run poses
+  const RUN_START_COL = 0;    // first run frame (inclusive)
+  const RUN_FRAMES = 6;       // how many columns to cycle through (from start)
+  const BASE_ANIM_MS = 95;    // baseline per-frame duration
+
+  // Sync cadence to game speed for a livelier feel
+  const speedFactor = Math.min(2.2, Math.max(0.65, animSpeed ?? 1));
+  const ANIM_MS = BASE_ANIM_MS / speedFactor;
+
   const frameW = img.naturalWidth / GRID_COLS;
   const frameH = img.naturalHeight / GRID_ROWS;
 
-  type AnimKey = "idle" | "run" | "jump" | "slide";
-  const ROW_META: Record<AnimKey, { row: number; frames?: number; startCol?: number }> = {
-    idle: { row: 6 },
-    run: { row: 2 },
-    jump: { row: 7 },
-    slide: { row: 0 },
-  };
-
-  let anim: AnimKey = "run";
-  if (player.isSliding) anim = "slide";
-  else if (player.isJumping || player.velocityY < -0.2) anim = "jump";
-
-  const meta = ROW_META[anim];
-  const row = Math.max(0, Math.min(GRID_ROWS - 1, meta.row));
-  const startCol = Math.max(0, Math.min(GRID_COLS - 1, meta.startCol ?? 0));
-  const maxColsAvailable = GRID_COLS - startCol;
-  const frames = Math.max(1, Math.min(meta.frames ?? GRID_COLS, maxColsAvailable));
-
-  const animSpeedMs = 90;
-  const frameIdx = Math.floor(timeMs / animSpeedMs) % frames;
-
-  const sx = (startCol + frameIdx) * frameW;
-  const sy = row * frameH;
+  const runFrame = Math.floor(timeMs / ANIM_MS) % RUN_FRAMES;
+  const sx = (RUN_START_COL + runFrame) * frameW;
+  const sy = RUN_ROW * frameH;
 
   const baseH = player.isSliding ? m.PLAYER_H_SLIDE : m.PLAYER_H_STAND;
-  const SCALE_STAND = 1.9;
-  const SCALE_SLIDE = 1.5;
   const FOOT_OFFSET = 6;
-  const scale = player.isSliding ? SCALE_SLIDE : SCALE_STAND;
+  // One authoritative render scale (PLAYER_RENDER_SCALE) — no longer multiplied by any
+  // road-distance factor, so it can't silently compound into an oversized sprite again.
+  const scale = player.isSliding ? PLAYER_RENDER_SCALE_SLIDE : PLAYER_RENDER_SCALE;
   const destW = m.PLAYER_W * scale;
   const destH = baseH * scale;
-  const centerX = laneCenterX(player.lane, 0);
   const x = centerX - destW / 2;
-  const y = player.y + baseH - destH - FOOT_OFFSET;
+  const bob = Math.sin((timeMs / (ANIM_MS * RUN_FRAMES)) * Math.PI * 2) * 3;
+  const y = player.y + groundYOffset + baseH - destH - FOOT_OFFSET + bob;
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.globalAlpha = 1;
 
   // Ground shadow to anchor character to the road
-  const shadowY = player.y + baseH - FOOT_OFFSET + 4;
+  const shadowY = groundY - FOOT_OFFSET + 4;
   ctx.save();
   ctx.globalAlpha = 0.45;
   ctx.fillStyle = "rgba(0,0,0,0.6)";
